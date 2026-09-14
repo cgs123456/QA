@@ -1,6 +1,12 @@
 # PROGRESS.md — InterviewCopilot
 
 ## 已完成
+- task-9 可见面（2026-09-14）：lib/api.ts 完整（REST+SSE+token 注入+401/网络/超时错误分类）+
+  lib/sse.ts（纯帧解析 + 来源标签）+ zustand stores（app/knowledge）+ TanStack Query hooks
+  （useStore CRUD/compile + useQA 两段式流式可取消）+ Search 页（命中标签 + 答案三态卡）+
+  Knowledge 页（建库/切换/删除 + md/json 导入 + 编译统计）+ App 导航；后端配合：
+  sources 含 routes、vec 失败降级不断链、retrieval 事件带 store_id/warnings。
+  测试：vitest 9 + Playwright qa_sse.spec.ts（API 契约级，无需壳/浏览器）+ pytest 98。
 - task-8 流式契约与护栏（2026-09-14）：routers/qa.py（POST /qa/ask 建 task 后台跑 → task_id；
   GET /qa/stream SSE：retrieval→generation*→done；读毕/TTL60s 清理；未知/过期 404；
   is_disconnected 1s 轮询 + finally 取消后台；禁缓冲头）+ core/prompt_guard.py（PRD §3.9，
@@ -37,7 +43,7 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- task-8 已完工待提交；全量 pytest 97 passed（见下）。
+- task-9 已完工待提交；机器可跑项全绿（见下）；UI 点击走查转人工（需 Tauri 壳）。
 
 ## 待人工验证
 - 需 Rust + MSVC Build Tools 机器：`cargo test`（protocol 3 例 + degradation 3 例 + manager 2 例）通过；`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
@@ -112,3 +118,14 @@
   回归单测锁定（同一教训：dev 库curl残留 store 已清；eval 固定 id 的种子跨库编译不再炸）。
   已知后续（本次不动，记账）：routers 写路径尚未持 connection.write_lock 串行（R3 字面要求），
   并发编译/删除与后台检索同发时可能 SQLITE_BUSY——D 路由硬化时收。
+- task-9（2026-09-14）：pytest **98 passed** + vitest **9 passed** +
+  Playwright `qa_sse.spec.ts` **1 passed（4.4s，无需浏览器）** + `tsc` 0 + `pnpm build` 成功（75 modules）。
+  spec 覆盖 DoD 机器部分：建库→导种子（qa=8）→direct（官方答案/零LLM）→fail 文案→建B库切当前库→
+  无 store 提问 retrieval.store_id==B→删A后 404；无缓冲头断言；sidecar 子进程 DB 隔离在系统临时目录。
+  后端配合改动：sources 加 routes（标签用）、vec 失败降级不断链（+单测）、retrieval 带 store_id/warnings。
+  新增依赖：zustand / @tanstack/react-query / vitest / @playwright/test（均为 PRD 栈或测试工具）。
+- 人工 E2E 走查（需 Tauri 壳，`$env:INTERVIEWCOPILOT_PYTHON="<python>"` 后 `pnpm tauri dev`）：
+  ① 壳启动 sidecar connected；② 知识管理页建库「走查库」；③ 导入含字段+问答的 md（stats qa=2/fields=2）；
+  ④ 手动查找页问「公司成立时间」→固定答案卡 + 字段直查标签；⑤ 问无匹配串→知识库未命中卡；
+  ⑥ 建第二库导其他内容→切换当前库→同问指向新库（命中变化）；⑦ 删除库→列表消失（级联）。
+  不做项（本次未碰）：视觉打磨、暗色主题、Rehearsal 页。

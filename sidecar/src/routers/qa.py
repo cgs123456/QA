@@ -108,28 +108,31 @@ async def _run_task(task_id: str) -> None:
                 "error": getattr(e, "kind", "config"),
                 "sources": [], "llm_calls": 0}})
             return
-        try:
-            embedder = _get_embedder()
-        except Exception as e:
-            await task.queue.put({"type": "done", "result": {
-                "type": "error", "text": "答案生成失败，请稍后重试。",
-                "error": f"embed:{type(e).__name__}",
-                "sources": [], "llm_calls": 0}})
-            return
+        # embedder 延迟到 answer_stream 内按需构造：缺模型时降级 vec=[] + warnings，
+        # 不再此处整体失败（保证 retrieval 事件恒先到达）。
 
-        decision = sources = None
+        decision = sources = warnings = None
+
+        def _embed_fn(texts):
+            # 延迟到真正需要时构造 embedder；缺模型时抛错，
+            # 由 answer_stream 降级为 vec=[] + warnings（不断全链路）。
+            return _get_embedder().embed(texts)
+
         async for event in answer_stream(
-            _conn(), task.store_id, task.question, llm, embedder.embed
+            _conn(), task.store_id, task.question, llm, _embed_fn
         ):
             kind = event["type"]
             if kind == "decision":
                 decision = event
+                warnings = event.get("warnings", [])
             elif kind == "sources":
                 sources = event["sources"]
                 await task.queue.put({
                     "type": "retrieval",
                     "action": decision["action"],
                     "top1_score": decision["top1_score"],
+                    "warnings": warnings,
+                    "store_id": task.store_id,
                     "sources": sources,
                 })
             elif kind == "chunk":
@@ -143,6 +146,8 @@ async def _run_task(task_id: str) -> None:
                         "type": "retrieval",
                         "action": result["type"],
                         "top1_score": decision["top1_score"] if decision else 0.0,
+                        "warnings": warnings or [],
+                        "store_id": task.store_id,
                         "sources": result.get("sources", []),
                     })
                 await task.queue.put(

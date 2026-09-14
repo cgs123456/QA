@@ -194,13 +194,35 @@ async def test_llm_error_path(monkeypatch):
     assert result["llm_calls"] == 1
 
 
+@pytest.mark.anyio
+async def test_vec_failure_degrades_not_breaks(demo_db):
+    """embed 缺模型 → vec=[] + warnings，direct 照常（retrieval 恒先到达）。"""
+    db, sid = demo_db
+    fake = FakeProvider()
+
+    def _boom(texts):
+        raise RuntimeError("本地 embedding 模型缺失")
+
+    events = [e async for e in answer_stream(db, sid, "退货期限", fake, _boom)]
+    assert events[0]["type"] == "decision"
+    assert events[0]["warnings"] == ["vec:RuntimeError"]
+    done = events[-1]["result"]
+    assert done["type"] == "direct"
+    assert done["text"] == "七天内无理由退货，运费由买家承担首重。"
+    assert fake.calls == []
+
+
 def test_select_contexts_single_point():
     items = [
         {"type": "qa", "key": "q1", "score": 0.5,
+         "s": {"field": 0.0, "jieba": 0.9, "simple": 0.9, "vec": 0.9},
          "payload": {"official_answer": "A1"}},
         {"type": "field", "key": "f1", "score": 0.5,
+         "s": {"field": 1.0, "jieba": 0.0, "simple": 0.0, "vec": 0.0},
          "payload": {"field_value": "V2"}},
     ]
     contexts, sources = select_contexts({"items": items})
     assert contexts == ["A1", "V2"]
     assert [(s["type"], s["key"]) for s in sources] == [("qa", "q1"), ("field", "f1")]
+    assert sources[0]["routes"] == ["jieba", "simple", "vec"]
+    assert sources[1]["routes"] == ["field"]

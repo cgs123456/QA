@@ -4,6 +4,8 @@ import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import { SIDECAR_DEGRADED_EVENT } from "./lib/api";
 import { Degraded } from "./pages/Degraded";
+import { Knowledge } from "./pages/Knowledge";
+import { Search } from "./pages/Search";
 
 type SidecarStatus = {
   connected: boolean;
@@ -16,6 +18,7 @@ type DegradedInfo = {
 };
 
 function App() {
+  const [tab, setTab] = useState<"search" | "knowledge">("search");
   const [status, setStatus] = useState<SidecarStatus | null>(null);
   const [degraded, setDegraded] = useState<DegradedInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,13 +82,25 @@ function App() {
 
   return (
     <main className="container">
-      <h1>InterviewCopilot (skeleton)</h1>
+      <h1>InterviewCopilot</h1>
       <p data-testid="sidecar-status">
         sidecar {connected ? "connected" : "disconnected"}
         {connected && status?.port != null ? ` (port ${status.port})` : ""}
       </p>
       {error != null && <p data-testid="sidecar-error">{error}</p>}
-      {status == null && error == null && <p>waiting for sidecar…</p>}
+      <nav className="row">
+        <button type="button" onClick={() => setTab("search")} disabled={tab === "search"}>
+          手动查找
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("knowledge")}
+          disabled={tab === "knowledge"}
+        >
+          知识管理
+        </button>
+      </nav>
+      {tab === "search" ? <Search /> : <Knowledge />}
     </main>
   );
 }

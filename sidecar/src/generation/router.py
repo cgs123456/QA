@@ -26,11 +26,13 @@ def _candidate_text(cand) -> str:
 
 
 def _sources(items) -> list:
+    """来源载荷：含贡献路由（UI 来源标签用；field 为 ["field"]）。"""
     return [
         {
             "type": c["type"],
             "key": c["key"],
             "score": c["score"],
+            "routes": [r for r, s in c["s"].items() if s > 0],
             "payload": c["payload"],
         }
         for c in items
@@ -54,8 +56,12 @@ async def answer_stream(conn, store_id: str, question: str, llm, embed_fn):
     field = field_lookup(conn, store_id, question) if question else []
     fts = fts5_search(conn, store_id, question) if question else []
     vec = []
+    warnings = []
     if question:
-        vec = vector_search(conn, store_id, embed_fn([question])[0])
+        try:
+            vec = vector_search(conn, store_id, embed_fn([question])[0])
+        except Exception as e:  # vec 路降级：不阻断其余三路（仅记错误种类）
+            warnings.append(f"vec:{type(e).__name__}")
     fused = fuse(
         field,
         [h for h in fts if h["route"] == "jieba"],
@@ -65,7 +71,7 @@ async def answer_stream(conn, store_id: str, question: str, llm, embed_fn):
     decision = decide(fused)
     action = decision["action"]
     yield {"type": "decision", "action": action,
-           "top1_score": decision["top1_score"]}
+           "top1_score": decision["top1_score"], "warnings": warnings}
 
     if action == "direct":
         yield {"type": "done", "result": {
