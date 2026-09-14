@@ -1,6 +1,10 @@
 # PROGRESS.md — InterviewCopilot
 
 ## 已完成
+- task-8 流式契约与护栏（2026-09-14）：routers/qa.py（POST /qa/ask 建 task 后台跑 → task_id；
+  GET /qa/stream SSE：retrieval→generation*→done；读毕/TTL60s 清理；未知/过期 404；
+  is_disconnected 1s 轮询 + finally 取消后台；禁缓冲头）+ core/prompt_guard.py（PRD §3.9，
+  provider 重导出收敛）+ 注入用例集（标签伪造转义）。
 - task-7 答案分派（2026-09-14）：generation/provider.py（Protocol 流式 generate+embed；
   Ollama 本地流式默认 qwen2.5:7b + OpenAI SSE + Custom 占位；30s 超时走 error 路径四 kind；
   SYSTEM_PROMPT/build_prompt PRD §3.9 归 provider）+ router.py（三路分派对接 Task 6 判定：
@@ -33,7 +37,7 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- task-7 已完工待提交；全量 pytest 85 passed（见下）；Ollama e2e 与 Rust 编译转人工。
+- task-8 已完工待提交；全量 pytest 97 passed（见下）。
 
 ## 待人工验证
 - 需 Rust + MSVC Build Tools 机器：`cargo test`（protocol 3 例 + degradation 3 例 + manager 2 例）通过；`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
@@ -99,3 +103,12 @@
   待人工：① Ollama e2e（本机 11434 拒连）：`ollama serve` + `ollama pull qwen2.5:7b` 后跑
   `python scripts/e2e_ollama.py` 看 chunk 时间戳流式；  ② Rust：`cargo test`（含 fallback 占位确定性单测） + 首个 cargo build 生成 Cargo.lock 入仓
   + `cargo audit`（PRD 供应链要求顺手做）。
+- task-8（2026-09-14）：全量 pytest **97 passed**（旧 85 + 新 12：qa_stream 6 / prompt_guard 5 + 碰撞回归 1）。
+  DoD：真机 SSE（建库→编译→ask→stream）：direct[retrieval→done]官方答案、fail「知识库未命中」、
+  无缓冲头（no-cache/x-accel-buffering:no）、读毕复读 404；TTL 短注单测 404；断开→取消后台+清记录
+  （单循环直驱确定性单测——附带发现：TestClient 不投递断开，生产靠 is_disconnected 1s 轮询，
+  已在实现中）；注入 6 用例全绿（标签伪造转义为全角，资料保真，问题恒末位）。
+  实测修一真 bug：显式 id 跨库重导撞全局主键 → compile 500（IntegrityError）；现换新 id + embedding 跟随迁移，
+  回归单测锁定（同一教训：dev 库curl残留 store 已清；eval 固定 id 的种子跨库编译不再炸）。
+  已知后续（本次不动，记账）：routers 写路径尚未持 connection.write_lock 串行（R3 字面要求），
+  并发编译/删除与后台检索同发时可能 SQLITE_BUSY——D 路由硬化时收。

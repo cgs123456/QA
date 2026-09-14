@@ -56,10 +56,22 @@ def compile_store(
         stats.update(stats_extra)
 
     with conn:  # 唯一短事务：qa + fields + aliases（+ vec 预留位）
+        emb = dict(embeddings) if embeddings else {}
+        taken_ids = {
+            r[0] for r in conn.execute("SELECT id FROM qa_pairs").fetchall()
+        }
         for item in qa_items or []:
             q = item["standard_question"]
             if q not in existing_qa:
                 qid = item.get("id") or _new_id()
+                if qid in taken_ids:
+                    # 显式 id 已被他库占用（全局主键）：换新 id，embedding 跟随迁移。
+                    # 同库重导走 update/skip 分支，不会到这里。
+                    fresh = _new_id()
+                    if qid in emb:
+                        emb[fresh] = emb.pop(qid)
+                    qid = fresh
+                taken_ids.add(qid)
                 conn.execute(
                     "INSERT INTO qa_pairs(id, store_id, standard_question,"
                     " official_answer, category, usage_status, followup_logic)"
@@ -87,11 +99,11 @@ def compile_store(
                     stats["qa_updated"] += 1
                 else:
                     stats["qa_skipped"] += 1
-            if embeddings and qid in embeddings:
+            if qid in emb:
                 conn.execute(
                     "INSERT OR REPLACE INTO vec_qa_local(qa_id, embedding)"
                     " VALUES (?, ?)",
-                    (qid, embeddings[qid]),
+                    (qid, emb[qid]),
                 )
                 stats["vec_written"] += 1
 

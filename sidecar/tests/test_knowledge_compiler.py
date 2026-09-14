@@ -147,3 +147,28 @@ def test_conflict_overwrite_logs_event(db):
     ).fetchall()
     assert events  # content-free：只记计数
     assert '"count": 2' in events[-1][0]
+
+
+def test_explicit_id_collision_across_stores(db):
+    """显式 id 被他库占用 → 换新 id 入库（曾导致跨库重导 500），embedding 跟随。"""
+    import sqlite_vec
+
+    s1 = create_store(db, "A库")
+    s2 = create_store(db, "B库")
+    qa = [{"id": "fixed-1", "standard_question": "同题",
+           "official_answer": "答", "usage_status": "fixed"}]
+    compile_store(db, s1["id"], qa, [])
+    stats = compile_store(db, s2["id"], qa, [])
+    assert stats["qa_inserted"] == 1
+    ids = [r[0] for r in db.execute("SELECT id FROM qa_pairs").fetchall()]
+    assert len(ids) == 2 and "fixed-1" in ids
+
+    emb = {"fixed-1": sqlite_vec.serialize_float32([1.0] * 512)}
+    s3 = create_store(db, "C库")
+    compile_store(db, s3["id"], qa, [], embeddings=emb)
+    vec_rows = db.execute(
+        "SELECT v.qa_id FROM vec_qa_local v JOIN qa_pairs q ON q.id = v.qa_id"
+        " WHERE q.store_id=?",
+        (s3["id"],),
+    ).fetchall()
+    assert len(vec_rows) == 1 and vec_rows[0][0] != "fixed-1"
