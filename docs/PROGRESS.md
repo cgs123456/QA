@@ -48,9 +48,13 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- task-12 抽检执行完毕待提交：8 项中 6 通过（1 全量复跑/2 真题补齐/3 null 全拒/4 打包重验/5 日志红线/6 数字复核），
-  2 维持外部状态（7 降级链路待壳，8 tag 暂缓）；评测集 20→59（+39 自然真题），基线重跑 top3=0.490、
-  零答错、null 10/10，验收 #6 改判未达标（根因明确，非崩溃），tag 维持暂缓。
+- 工具链就绪（2026-09-14）：MSVC Build Tools 2022（17.14，MSVC 14.44 + Win11SDK 26100，
+  quiet 安装一次成功）+ rustc/cargo 1.98.1 stable-msvc；`cargo test` 9/9 绿（全依赖树编译通过，
+  含 tauri/reqwest/keyring/tokio）；`cargo clippy --all-targets` 零警告；`cargo audit` 默认通过
+  （576 crates，0 漏洞，9 允许警告：derivative/instant/proc-macro-error/unic-*/glib 等传递依赖
+  的 unmaintained/unsound，无修复动作）；`src-tauri/Cargo.lock` 已入仓。
+  Rust 历史欠账清零：cargo test/clippy/audit/lock 全部本地可跑；待办仅剩 Ollama e2e 与壳目检。
+- Phase 1b 开工：R9–R14 已接受（见下节）；首任务 1b-1（Python WS 音频协议）进行中。
 
 ## 待人工验证
 - 需 Rust + MSVC Build Tools 机器：`cargo test`（protocol 3 例 + degradation 3 例 + manager 2 例）通过；`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
