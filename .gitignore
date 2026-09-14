@@ -42,6 +42,10 @@ sidecar/vendor/*.dylib
 sidecar/vendor/dict/*
 !sidecar/vendor/dict/.gitkeep
 
+# Local model weights (~95MB): never commit, see sidecar/src/models/registry.py
+sidecar/models/*
+!sidecar/models/.gitkeep
+
 # Local runtime
 *.db
 *.db-wal

@@ -1,6 +1,12 @@
 # PROGRESS.md — InterviewCopilot
 
 ## 已完成
+- task-6 向量融合基线（2026-09-14）：models/registry（bge ONNX 来源+SHA256 pin）+ downloader
+  （MS→hf-mirror→HF/断点续传/SHA/进度）；bge-small-zh-v1.5 ONNX 落盘 sidecar/models/（gitignored，
+  onnx 41KB SHA 与 LFS 一致，data 90MB 一致，tokenizer 双文件实测 pin）；
+  embedder（ort CPU/批量/mean池化/L2归一化512维）+ vector_search（vec0/L2/s=1-d/2/d<0.6/top5/rejected过滤）；
+  compiler embeddings 同事务位 + SIGKILL 回滚零残留；hybrid_rank（归一化加权非RRF，字段entity==category联动，
+  decide 四档）+ eval_full；基线报告 docs/eval-baseline.md（阈值未改）。
 - task-5 文本闭环（2026-09-14）：parsers（markdown H1→entity/H2疑问→QA/陈述→字段首段/Q&A块；json 实体/qa_pairs/列表三形）+
   validator（必填/usage集合/批内去重）+ field_vocab.json（3 组）/extractor（归一化+别名展开表）+
   stores.py（CRUD/单选current/级联删vec手工清）+ compiler（单短事务写qa+fields+aliases，embeddings 参数预留 R6 位，
@@ -20,7 +26,7 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- task-5 已完工待提交；全量 pytest 44 passed（见下）。
+- task-6 已完工待提交；全量 pytest 67 passed（见下）。
 
 ## 待人工验证
 - 需 Rust + MSVC Build Tools 机器：`cargo test`（protocol 3 例 + degradation 3 例 + manager 2 例）通过；`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
@@ -62,3 +68,17 @@
   ① jieba/simple_query 为 AND 语义（含虚词），自然长问句易整体落空——D6 应先关键词提取；
   ② FTS5 idf=ln((N-n+0.5)/(n+0.5))，N=2/n=1 时 idf=ln(1)=0，合法命中也被 -0.5 门限滤掉——
   阈值必须真实规模语料标定，禁止为迁就 demo 调门限。
+- task-6（2026-09-14）：全量 pytest **67 passed**（旧 44 + 新 23：downloader 5 / embedder 4 /
+  vector 5 / hybrid 7 / rollback 1 / eval_full 1）。DoD：① SIGKILL 回滚零残留（victim 4000 行编译中被
+  TerminateProcess，重启后 qa=0/vec=0/孤儿 0，且断言非正常退出、无 Traceback，排除假阳性）；
+  ② 三结构性案例绿（0.500/0.500/0.750 精确相等）+ 全分 ∈[0,1]（越界钳入）+ decide 六边界；
+  ③ 基线报告 `docs/eval-baseline.md` 落盘（阈值未改）。
+  模型：onnx-community/bge-small-zh-v1.5-ONNX（base BAAI），onnx 经 ModelScope 首镜像（无降级）、
+  tokenizer.json 经 hf-mirror（ModelScope 首试超时自动降级，顺序纪律有效）；pyproject 新增 onnxruntime/transformers。
+  关键结构发现（hybrid_rank 注释 + 基线解读）：0.75 可达**必须**字段证据联动到同一 qa 候选
+  （entity==category，同源 H1），否则直接返回档死亡——联动已实现（二值结构性，强度仍由 s_i 表达）；
+  另发现 vec 门限 s=0.7 与 PRD 结构表 (3.0+1.5)/6.0=0.750 的字面算术差 0.033（全门限 s 和应为 0.783），
+  按 PRD 字面锚定 0.750，引擎未动，留待标定。
+  基线现象（demo 8QA/20题，默认阈值）：Top-3/5=1.0 但 Fail-Closed=0.80、direct=0.15——
+  字段联动需精确相等（自然问法极少逐字等于 field_name）+ 纯模糊上限恒 0.5；
+  null 题 FC=1.0（方向正确）。标定纪律重申：不得为提 direct 召回调权重/阈值，动则记录重跑。

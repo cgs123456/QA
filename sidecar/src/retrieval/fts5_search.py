@@ -28,7 +28,8 @@ def normalize_score(bm25: float) -> float:
 def _search_route(conn, store_id: str, query: str, func: str, route: str, top_k: int) -> list:
     try:
         rows = conn.execute(
-            "SELECT q.id, q.standard_question, q.official_answer, bm25(ft_qa) AS b"
+            "SELECT q.id, q.standard_question, q.official_answer, q.category,"
+            " bm25(ft_qa) AS b"
             " FROM ft_qa JOIN qa_pairs q ON q.rowid = ft_qa.rowid"
             f" WHERE ft_qa MATCH {func}(?) AND q.store_id = ?"
             " AND (q.usage_status IS NULL OR q.usage_status <> 'rejected')"
@@ -38,7 +39,7 @@ def _search_route(conn, store_id: str, query: str, func: str, route: str, top_k:
     except sqlite3.OperationalError:
         return []
     hits = []
-    for qa_id, question, answer, bm25 in rows:
+    for qa_id, question, answer, category, bm25 in rows:
         if bm25 is None or bm25 >= BM25_CUTOFF:
             continue
         hits.append(
@@ -46,6 +47,7 @@ def _search_route(conn, store_id: str, query: str, func: str, route: str, top_k:
                 "qa_id": qa_id,
                 "standard_question": question,
                 "official_answer": answer,
+                "category": category,
                 "route": route,
                 "bm25": bm25,
                 "s": normalize_score(bm25),
