@@ -90,8 +90,21 @@ Rust 生产端（1b-3 落地）：`audio::frame::encode_ws_frame(seq, ts_ms, &pc
 必含 `segment_id` / `path` / `ts_ms`；final 另含 `text` + `duration_ms`
 （起止取事件时间戳，非挂钟）；error 的 `error` 取值：
 `provider_timeout|provider_error|all_providers_failed`（ provider 故障）、
+`unavailable`（provider 不可用：权重未就位 / 依赖未装）、
+`manual_input_required`（降级链全灭 → 前端切手动输入，task15）、
 `no_provider`（未配置 ASR）、`interrupted`（同 path 重复 start 顶掉旧段）、
-`dropped_overload`（见下）。
+`dropped_overload`、`segment_truncated`（见下）。
+
+**task15 扩充**：`asr_final` 增 `provider`（**实际出力**的那一级名，如
+`faster-whisper` / `local-backup` / `cloud-rest`）；发生过降级时另增
+`degraded`，为 `["provider:error_kind", ...]` 的逐级失败摘要。
+`asr_error` 在降级链全灭时同样带 `degraded`。两者均内容无关（R14）。
+
+**`asr_start` 语义（task15 裁定）**：在 **segment_start（缓冲开启）** 下发，
+即「本段 ASR 开始处理」。转写实际发生在 segment_end；若把 `asr_start` 挪到彼时，
+前端在整段说话期间收不到任何"已开始"信号，且需改本契约 + Rust `asr://start` 映射
++ 既有 e2e 断言。故保持现语义不变（task15 原文「转写开始 → asr_start」按此理解）。
+
 
 ### 背压与日志（R13/R14）
 

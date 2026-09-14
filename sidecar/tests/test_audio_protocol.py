@@ -199,8 +199,9 @@ def test_overload_drops_with_error(monkeypatch):
     class Gated(StubASRProvider):
         name = "gated"
 
-        async def transcribe(self, pcm_f32, sample_rate=16000):
+        async def transcribe(self, pcm_f32, sample_rate=16000, path=None):
             self.calls.append((len(pcm_f32), sample_rate))
+            self.paths.append(path)
             loop = _asyncio.get_running_loop()
             await loop.run_in_executor(None, gate.wait)
             return "g"

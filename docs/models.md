@@ -32,3 +32,27 @@
 
 - pip 包 `sqlite-vec==0.1.9`（见 `requirements-lock.txt`），`vec0.dll` 随包，
   PyInstaller 经 `--collect-all sqlite_vec` 收包（TOCs 实证）。
+
+## faster-whisper-base（ASR，CTranslate2 int8，MIT）
+
+- 转换：`Systran/faster-whisper-base`（base `openai/whisper-base`）
+- 镜像顺序：ModelScope → hf-mirror → HF（2026-09-14 实测三源对 `config.json` 均 200，
+  故按既有纪律全列、不调序）
+- 本地：`sidecar/models/faster-whisper-base/`（**实测 138.5 MiB**）
+- 运行时：`faster-whisper==1.2.1` / `ctranslate2==4.8.2` / `av==18.1.0`（见 lock）；
+  PyInstaller 经 `--collect-all ctranslate2` + `--collect-all av` 收包——
+  ctranslate2 的原生 DLL 按名字加载、`av` 是 `faster_whisper.audio` 的顶层 import，
+  两者静态分析都看不到，漏了会「装得上但跑不了」。
+
+| 文件 | 尺寸 | SHA256 | 备注 |
+|---|---|---|---|
+| `model.bin` | 145,217,532 | `d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9` | HF LFS oid（权威） |
+| `config.json` | 2,309 | `56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a` | 非 LFS，首下实测 pin |
+| `tokenizer.json` | 2,203,239 | `fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab` | 非 LFS，首下实测 pin |
+| `vocabulary.txt` | 459,861 | `34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913` | 非 LFS，首下实测 pin |
+
+> 2026-09-14 实测：`ensure_model_files()` 经 hf-mirror 全量落盘 **17s**，
+> 四个文件 **SHA256 全部通过**（registry 条目端到端验证）。
+> 注：task15 原文写「~75MB」，实测 base 档为 138.5 MiB；~75MB 对应 `tiny` 档。
+> 本轮按 provider 规格取 `base`，尺寸以实测为准。
+

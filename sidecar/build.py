@@ -11,6 +11,10 @@
   **动态** import 它（uvicorn/config.py 里的 import_from_string），静态分析看不到。
   漏掉的后果不是"降级"而是 **WS 全挂**：uvicorn 对 /audio/stream 的升级请求直接
   返回 404，Rust 客户端永远连不上（task-14 实测：装 websockets 前三个用例全 404）。
+- ctranslate2 / av（faster-whisper 的运行时）：ctranslate2 带原生 DLL（加载期按名字
+  找库，静态分析看不到），av 是 `faster_whisper/audio.py` 的**顶层** import
+  （`__init__.py` 一进来就要它，不是可选解码路径）。两者都用 --collect-all 兜底；
+  漏掉的后果同样是"装得上但跑不了"，且只在真实转写时才暴露。
 - 保留控制台（stdout 握手行是 R2 契约）。
 """
 
@@ -56,6 +60,10 @@ def main() -> None:
         "--collect-all", "sqlite_vec",
         # uvicorn 动态 import WS 实现，静态分析看不到；漏了则 /audio/stream 404。
         "--collect-all", "websockets",
+        # faster-whisper 运行时：ctranslate2 的原生 DLL 按名字加载，
+        # av 是 faster_whisper.audio 的顶层 import——都收不到就"装得上跑不了"。
+        "--collect-all", "ctranslate2",
+        "--collect-all", "av",
         "--distpath", args.distpath,
         "--workpath", args.workpath,
         "--specpath", args.workpath,

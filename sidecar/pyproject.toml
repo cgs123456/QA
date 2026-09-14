@@ -13,6 +13,9 @@ dependencies = [
     "sqlite-vec>=0.1",
     "onnxruntime>=1.17",
     "transformers>=4.40",
+    # 本地 ASR（task15）：base 档 int8 CPU。权重不进包，经 registry 下载器按
+    # SHA256 落盘（sidecar/models/faster-whisper-base）。
+    "faster-whisper>=1.0",
 ]
 
 [project.optional-dependencies]

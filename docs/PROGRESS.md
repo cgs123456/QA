@@ -1,6 +1,54 @@
 # PROGRESS.md — InterviewCopilot
 
 ## 已完成
+- task-15 段→文本→下行 + Provider 失败自动切换（2026-09-14）：sidecar ASR 从「抽象 + 替身」
+  变为「真 provider + 降级链」。
+  **新增文件**：`asr/faster_whisper_provider.py`（本地 base/int8/CPU，整段转写、语言自动，
+  `asyncio.to_thread` 卸载 CPU，**进程内单例**缓存权重）；`asr/cloud_rest.py`（OpenAI 兼容
+  `/audio/transcriptions`，float32→16k 单声道 WAV 走标准库 `wave`，key 只进 Authorization 头）；
+  `asr/fallback.py`（降级链）；`scripts/bench_asr_latency.py`（时延实测）。
+  **`asr/provider.py`**：`transcribe(pcm_f32, sample_rate, path)` 增 `path` 标签（诊断用，
+  不参与转写）；错误 kind 常量化（`unavailable`/`manual_input_required` 等）；
+  `ASRError.attempts` 承载逐级失败摘要。`StubASRProvider` 增 `paths` 平行列表
+  （`calls` 仍是 `(size, rate)` 二元组，既有断言零改动）。
+  **`routers/audio.py`**：`asr_final` 增 `provider`（**实际出力**那一级）与 `degraded`
+  （`["provider:kind", ...]`）；`asr_error` 在链全灭时同带 `degraded`；转写调用改走
+  `_run_provider`（优先 `transcribe_with_detail`，普通 provider 回落 `transcribe`）。
+  **降级链**：本地主 → 同类本地备选（配了才在）→ 云端 REST（**有 key 才在**）→ 纯 VAD + 手动输入。
+  终级不是 provider：全灭时抛 `manual_input_required`（前端据此切手动输入；
+  `manual_input=False` 则抛 `all_providers_failed`）。每降一级记**内容无关**事件
+  （级号/provider 名/错误 kind/path/超时），R14 由单测以 `caplog` 断言。
+  **超时按段时长派生**（`max(5s, 3×段时长)`），不写固定值：固定值会把「15s 段在 CPU int8 上
+  要转 10s+」这一**容量事实**误判成**故障**并稳定降级。单次最坏耗时 = 级数 × 该超时（已记账）。
+  **结果经返回值传递，不落实例状态**——同一条链被多段并发复用（待转写 ≤8），
+  共享可变状态必然串味，故有 `ASRResult` 与 `transcribe_with_detail`。
+  **`asr_start` 语义裁定**：保持「segment_start 时下发」，即「本段 ASR 开始处理」。
+  task15 原文「转写开始 → asr_start」按此理解——转写实际在 segment_end 发生，
+  若挪到彼时，前端在整段说话期间收不到任何"已开始"信号，且需改 api-contract +
+  Rust `asr://start` 映射 + 既有 e2e 断言。已写入 `docs/api-contract.md`。
+  **OpenAI Realtime WS 裁定为 Phase 2（本轮裁掉）**：① 它解决的是"边说边出字"，
+  而本项目当前是**整段转写**（`asr_partial` 本阶段不发），上 Realtime 等于同时换掉
+  端点语义与下行协议，属 W4 范围；② 可用性目标已由「本地主 + 本地备选 + 云端 REST」
+  三级覆盖，Realtime 是**延迟**优化而非可用性兜底；③ 它是**云依赖**，与 local-first
+  默认姿态相反，只应在用户显式选择时启用。
+  **权重获取**：`models/registry.py` 新增 `faster-whisper-base` 条目（4 文件；
+  `model.bin` 145,217,532 B 的 SHA256 取自 HF LFS oid（权威），三个非 LFS 小文件
+  首下实测 pin；镜像 ModelScope → hf-mirror → HF）。实测 `ensure_model_files()`
+  经 hf-mirror 全量落盘 **17s，四文件 SHA256 全部通过**（条目端到端验证）。
+  **尺寸偏差记录**：task15 原文写「~75MB」，实测 base 档 **138.5 MiB**；
+  ~75MB 对应 `tiny` 档。按 provider 规格取 `base`，尺寸以实测为准（已记 models.md）。
+  **打包**：`build.py` 增 `--collect-all ctranslate2` + `--collect-all av`——
+  ctranslate2 原生 DLL 按名字加载、`av` 是 `faster_whisper/audio.py` 的**顶层** import
+  （`__init__.py` 一进来就要），静态分析都看不到，漏了会「装得上但跑不了」。
+  `pyproject.toml` / `requirements-lock.txt` 加 `faster-whisper==1.2.1`、
+  `ctranslate2==4.8.2`、`av==18.1.0`。
+  数字：`pytest` **150 passed / 0 failed**（新增 `test_asr_fallback.py` 25 条）。
+  打包复测（项目外临时目录）：**317.5 MiB**（+126.7 MiB），四条 §3.13 校验
+  **ALL PASS**，spawn→health **2.81s**（task-10 为 1.03s，余量降到 ~2.2s）。
+  时延见 `docs/benchmark.md`：冷加载 **2790 ms**、3s 段 **1903 ms**、15s 段 **1888 ms**
+  ——**转写耗时与段长几乎无关**（whisper 按 30s 窗编码，≤30s 落在同一窗口，算力常数级）。
+  **未做/挂起**：中文真人样本 → 文本正确（人耳比对，需真实录音，按「真实数据先跳过」挂起）；
+  `asr_partial` 流式下行；`dist-sidecar/` 仍是 task-10 旧包（见下）。
 - task-14 Rust→sidecar 音频 WS 全链路（2026-09-14）：Rust 侧新增 `audio/uplink.rs`（WS 客户端 +
   下行→Tauri 事件桥），sidecar 侧段缓冲按 R13 改造，并补上**真实 uvicorn** 的跨语言 e2e。
   **本次查出两个会让整条音频链路静默失效的问题（都是既有代码，非本次引入）**：
@@ -164,16 +212,36 @@
   `wasapi_loopback` / `mod`）——Windows loopback + 全平台 mic + Linux monitor 三路
   统一到 `LoopbackSource` trait 与同一条 `CapturePipeline`（原生率/声道 → downmix 单声道
   → rubato 16k → 480 帧 → int16(VAD) + float32(WS) 双输出）。
-  **1b-4 `vad.rs` 已落地（未提交）**：`Vad` trait + `WebrtcVad`（默认，aggressiveness 初值 2）
+  **1b-4 `vad.rs` 已落地**：`Vad` trait + `WebrtcVad`（默认，aggressiveness 初值 2）
   + `SileroVad` stub（W4 用，本轮不引 `ort`）；R19 编译门通过，并查出两个静默失效入口
-  （crate 默认 8 kHz / `reset()` 打回 8 kHz+mode 0），已封装补偿并有回归测试，详见上节。
-  全量：cargo test **48** + 集成 **1**（设备无关 WAV 往返与内容校验）+ clippy 零警告 +
-  音频模块 rustfmt clean。
-  下一项（等主人派单）：`endpoint.rs` 端点状态机 → 双路独立 VAD + 事件合并进统一 WS 上行队列
-  → DoD（合成样本边界误差 <1 帧、双路互不干扰）；其后 1b-2（whisper 实转写）与 WS 上行接线
-  （把 `Frame16k` 经 `encode_ws_frame` 推给 sidecar `/audio/stream`）。
+  （crate 默认 8 kHz / `reset()` 打回 8 kHz+mode 0），已封装补偿并有回归测试。
+  **task-14 已提交（`fbe6f24`）**：WS 全链路（Rust `uplink.rs` + sidecar 段缓冲 R13 改造
+  + 真实 uvicorn 跨语言 e2e），并查出「依赖缺 WS 实现 → /audio/stream 全 404」与
+  「鉴权失败线上是 403 而非 1008」两个既有问题（详见上节）。
+  **task-15 已完成（未提交）**：ASR 真 provider（faster-whisper base/int8/CPU，
+  进程内单例）+ 四级降级链 + 下行 `provider`/`degraded` 扩充 + 权重 registry 条目
+  + 打包 collect + 时延实测（详见上节与 `docs/benchmark.md`）。
+  全量：`cargo test` **71**（lib 67 + 集成 1 + 跨语言 e2e 3）+ clippy 零告警 + rustfmt clean；
+  `pytest` **150 passed / 0 failed**。
+  **下一项（等主人派单，按既定节奏逐步汇报）**：
+  ① `endpoint.rs` 端点状态机（起始=最近 5 帧中 3 帧 voiced；结束=连续 ~500ms 静音 hangover；
+     最短段 250ms 丢弃；最长段 15s 强制切段；`vad_state` 心跳每 1s）——**仍未开始**；
+  ② 双路独立 VAD + 事件合并进统一 WS 上行队列（DoD：合成样本边界误差 <1 帧、双路互不干扰）；
+  ③ 把 `Frame16k` 经 `encode_ws_frame` 推给 sidecar `/audio/stream` 的生产接线
+     （目前 uplink 有完整单测与 e2e，但尚未接上采集管线）。
+  **两项需主人裁定/知会**：① task-14 的 DoD 字面「错 token → 1008」与实测 403 的偏差
+  （详见上节，已记 api-contract）；② `dist-sidecar/` 仍是 task-10 旧包，
+  重建被本机批量删除守卫拦住（详见 `docs/benchmark.md` 口径注记）。
 
 ## 待人工验证
+- task-15 ASR 识别质量（**必做，合成样本不能替代**）：本轮只测了**时延**，
+  音频是合成信号（谐波堆 + 音节包络），足以驱动真实算力路径但**文本无意义**。
+  需真实中文录音：① 录一段中文（含专有名词/中英混说更好），走完整链路
+  （`segment_start` → 帧 → `segment_end`）收 `asr_final`；② **人耳比对**文本是否正确，
+  并记录错字类型（同音字/漏字/英文串写）；③ 同时核对 `asr_final.duration_ms`
+  与音频实际时长（±1 帧）。素材放 `sidecar/models/` 外，勿入库。
+  复现入口：`python scripts/bench_asr_latency.py`（把合成音频换成真实 WAV 即可）。
+- task-15 双路并发时延：本轮为单路串行口径（loopback + mic 同时说话未测）。
 - 1b-4 VAD 真实人声自测（**必做，合成样本不能替代**）：合成 speech-like 信号在四个 mode 下
   都是 100/100 voiced（见上节），饱和到区分不出档位，只能证明"非退化"。必须用真实人声：
   ① 录一段"说话—停顿—说话"的真实 16k 单声道素材（或直接用 1b-3 的 `record_loopback`

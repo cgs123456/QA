@@ -1,6 +1,9 @@
-# 实测档案：sidecar onedir 打包（task-4 建，task-10 重定基线，2026-09-14）
+# 实测档案：sidecar onedir 打包 + ASR 时延（task-4 建，task-10 / task-15 扩）
 
-> 范围：sidecar-only 体积与启动。整包 Standard / Full 两档待 Tauri 壳联调后定（D4）。
+> 本文收录两类实测：**打包体积与启动**（第 1–5 节，task-4/10）与
+> **ASR 时延**（末节，task-15）。两者口径不同，勿混用。
+
+> 打包范围：sidecar-only 体积与启动。整包 Standard / Full 两档待 Tauri 壳联调后定（D4）。
 
 ## 方法
 
@@ -22,6 +25,37 @@ python scripts/verify-packaged.py             # §3.13 四条校验（cwd=C:\Win
 
 机器行（体积回归用）：`BUNDLE_BYTES=200060425`（Windows onedir 口径）。
 
+### task-15 重测（2026-09-14，新增 faster-whisper 运行时）
+
+| 项 | 值 |
+|---|---|
+| 总计 | **332,926,165 bytes（317.5 MiB）** |
+| 较 task-10 基线 | **+132,865,740 bytes（+126.7 MiB）** |
+| TOP1 `_internal/ctranslate2/ctranslate2.dll` | 56.55 MiB |
+| TOP2 `interviewcopilot-sidecar.exe` | 31.44 MiB |
+| TOP3 `_internal/numpy.libs/libscipy_openblas64…dll` | 19.64 MiB |
+| TOP4 `_internal/av.libs/avcodec-62-…dll` | 18.37 MiB |
+| TOP5 `_internal/onnxruntime/capi/*_pybind11_state.pyd` | 18.23 MiB |
+| TOP6 `_internal/av.libs/libx265-…dll` | 12.16 MiB |
+
+机器行（新基线）：`BUNDLE_BYTES=332926165`。
+
+增量构成（collect 生效核对）：`ctranslate2` 39 项 **59.4 MiB**、`av`（含 `av.libs`
+的 ffmpeg 系 DLL）**33.9 MiB**、`websockets` 72 项仍在（task-14 的 collect 未被破坏）。
+**这两项 collect 必须留**：ctranslate2 的原生 DLL 按名字加载、`av` 是
+`faster_whisper/audio.py` 的顶层 import，静态分析都看不到，漏了会「装得上但跑不了」。
+
+**优化候选（记录，不做）**：`av.libs` 的 ffmpeg 系 DLL（avcodec/libx265 等 ~30 MiB）
+本管线用不到——我们只把 numpy 数组喂给 `model.transcribe`，不经过 `decode_audio`。
+裁掉需替换 `faster_whisper/audio.py` 的顶层 import 或做 exclude，列入后续体积优化。
+
+> 口径注记：本次复测在**项目外临时目录**完成。原 workpath 无法重建——
+> PyInstaller `--clean` 要清理 `build-sidecar/` 下 211 个中间文件，
+> 被本机**批量删除守卫**（阈值 50 文件/回合）拦截，非沙箱层可解。
+> 故 `dist-sidecar/` 内目前仍是 task-10 的旧包（190.8 MiB，**不含** ctranslate2/av）；
+> 换机器或手动清空 `build-sidecar/` 后跑 `python sidecar/build.py` 即可复原标准路径。
+> 两者的 gitignore 均生效，产物不入库。
+
 > 路径注记（task-10）：sidecar 产物目录为 `dist-sidecar/`（构建目录 `build-sidecar/`）——
 > 前端 vite 产物占用 `dist/` 且构建会清空它，实测一次误删 sidecar 包后分离。
 
@@ -33,6 +67,10 @@ python scripts/verify-packaged.py             # §3.13 四条校验（cwd=C:\Win
   huggingface-hub/hf-xet/safetensors 等（~40MB）+ 打包后 exe 内嵌代码（~25MB）。
   属范围驱动的台阶，非回归——基线据此重定，1.15× 继续看守未来回归。
   体积优化（裁下载期依赖、确认懒加载）列入后续，本任务只记录不做。
+- task-15：332,926,165 bytes（317.5 MiB）——增量 +126.7 MiB 来自 faster-whisper
+  运行时（ctranslate2 59.4 + av 33.9 + 附带 ~33），属已立项范围（本地 ASR），
+  非回归。基线据此重定；**新基线 1.15× 上限 ≈ 383 MiB**，
+  下个任务若再加体积需先核对是否越线。
 
 ### 自污染 bug（已修，教训）
 
@@ -48,10 +86,14 @@ python scripts/verify-packaged.py             # §3.13 四条校验（cwd=C:\Win
 
 | 样本 | spawn→握手 | spawn→/health 200 |
 |---|---|---|
-| 1 | 1.13s | 1.15s |
-| 2 | 1.01s | 1.03s |
+| 1（task-10） | 1.13s | 1.15s |
+| 2（task-10） | 1.01s | 1.03s |
+| 3（task-15，含 faster-whisper 运行时） | **2.79s** | **2.81s** |
 
-对照 PRD §3.12（sidecar 后台预热 <5s，含拼音 ~500ms + 结巴词典 ~4s）：**通过且余量大**。
+对照 PRD §3.12（sidecar 后台预热 <5s，含拼音 ~500ms + 结巴词典 ~4s）：**通过**。
+task-10 时余量很大（~1.0s）；**task-15 后涨到 2.8s，余量降到 ~2.2s**——
+增量来自更大的 `_internal`（多出 ctranslate2/av 的 DLL 加载与目录扫描），
+非权重加载（provider 是懒加载，启动路径不碰它）。仍达标，但这是后续加依赖时要盯的项。
 差异说明：v0.7.1 的词典为懒加载——`jieba_dict()` 调用本身 ~0ms，
 ~0.5s 成本发生在首次中文查询（冒烟 jieba_query 首查 511.8ms），
 不在启动路径上；PRD 的 ~4s 系旧版本行为假设。
@@ -78,3 +120,50 @@ python scripts/verify-packaged.py             # §3.13 四条校验（cwd=C:\Win
 
 - （已关闭，task-10）生产数据目录替代 `_internal/data`：见上节“自污染 bug”。
 - 体积优化候选：裁剪下载期依赖（hf-xet/safetensors）、onnxruntime 精简——列入后续。
+
+---
+
+# ASR 时延实测（task-15，2026-09-14）
+
+> 口径：**segment_end 发出 → asr_final 收到**，走**真实 uvicorn + 真实 WS 传输**
+> （不是 `TestClient`——进程内客户端不反映真实链路）。VAD 判定本身在 Rust 侧
+> （30ms/帧），不在本区间内。冷加载单列：它在 sidecar 启动预热路径上，
+> 与「每段转写」是两笔账。
+
+## 复现
+
+```sh
+python scripts/bench_asr_latency.py --durations 3,15 --repeat 2
+```
+
+## 结果
+
+provider `faster-whisper` base / int8 / CPU；环境 Windows AMD64，Python 3.13.14。
+
+| 项 | 值 |
+|---|---|
+| 冷加载（首次权重加载） | **2790 ms** |
+| 3.0s 段（100 帧） | 中位 **1903 ms**（1896 / 1910） |
+| 15.0s 段（500 帧） | 中位 **1888 ms**（1878 / 1899） |
+
+段时长由 sidecar 按**帧数 × 30ms** 报回：实测 100 帧 → `duration_ms=3000`、
+500 帧 → `duration_ms=15000`，与端点规格一致（±1 帧内）。
+
+## 结论与影响
+
+1. **冷加载 2790 ms**，与 task15 坑位预警的「首次 2–3s」吻合。故 provider 必须是
+   **进程内单例**（`faster_whisper_provider._MODEL_CACHE`）；若每段重载，
+   1.9s 的转写会变成 4.7s。
+2. **转写耗时与段长几乎无关**（3s 与 15s 都在 ~1.9s）。原因：whisper 按 30s 窗口
+   编码，≤30s 的段落在同一窗口内，算力是**常数级**而非线性。
+   → 降级超时按「3× 段时长」派生（3s 段 9s、15s 段 45s），余量 4.7× / 23×。
+   也说明**固定 10s 超时对本档模型并不危险**；但换成更大档位（small/medium）或
+   长于 30s 的段后线性假设不成立，故仍按段时长派生，不写死。
+
+## 未测（挂起项，不粉饰）
+
+- **中文真人样本 → 文本正确（人耳比对）**：需真实录音，按「真实数据先跳过」挂起。
+  本节音频为**合成信号**（谐波堆 + 音节包络）——足以驱动真实算力路径，故时延有效；
+  但**转写文本无意义**，不得据此判断识别质量。
+- 长段（>30s）与更大权重档位的时延：端点规格单段上限 15s，超出场景不在本轮范围。
+- 双路并发（loopback + mic 同时说话）时延：本轮为单路串行口径。

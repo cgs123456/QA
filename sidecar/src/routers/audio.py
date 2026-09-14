@@ -14,6 +14,17 @@
   下行发送串行锁 + 5s 超时，超时/断开即清理连接。
 - 内容无关：本模块零打印；转写文本只进下行 JSON（R14）。
 
+**task15 下行扩充（记录）**：`asr_final` 增 `provider`（实际出力的那一级），
+降级过则增 `degraded`（`["provider:kind", ...]` 逐级失败摘要）；
+`asr_error` 同样在降级链全灭时带 `degraded`。二者均内容无关（R14）。
+
+**`asr_start` 语义裁定**：task15 原文为「转写开始 → asr_start」。本实现中
+`asr_start` 在 **segment_start（缓冲开启）** 时下发——这是 api-contract.md 与
+Rust 侧 `asr://start`、e2e 断言既有的契约；对前端而言它正是「本段 ASR 开始处理」
+的信号。转写在 segment_end 才真正发生，若改在彼时下发 `asr_start`，
+前端在整段说话期间收不到任何"已开始"信号，且需改契约 + Rust 映射 + 既有断言。
+故**不改**，语义按「ASR 开始处理本段」理解（见 docs/PROGRESS.md task15 条目）。
+
 **1b-1 → task-14 缓冲策略变更（记录）**：1b-1 定为「单段 ≤32MB，超则自动封段转写部分」。
 task-14 明确要求「有界队列，满则丢最旧 + 告警（R13）」，故改为丢最旧帧。理由：
 ① R13 的语义就是丢最旧，与 Rust 侧 `DropOldestQueue` 保持一致；
@@ -139,17 +150,45 @@ async def _ship(conn: _Conn, seg: dict) -> None:
     asyncio.create_task(_transcribe(conn, provider, seg))
 
 
+async def _run_provider(provider, pcm: bytes, path: str) -> tuple:
+    """调用 provider，返回 (text, provider_name, attempts)。
+
+    降级链（`FallbackASRProvider`）额外暴露 `transcribe_with_detail`：
+    它才知道**实际出力的那一级**与逐级失败摘要，故优先走它；
+    普通单 provider 直接调 `transcribe`，provider 名取 `name`。
+    """
+    detail = getattr(provider, "transcribe_with_detail", None)
+    if detail is not None:
+        res = await detail(pcm, 16000, path)
+        return res.text, res.provider, res.attempts
+    text = await provider.transcribe(pcm, 16000, path)
+    return text, getattr(provider, "name", "?"), ()
+
+
+def _degrade_payload(attempts) -> list:
+    """逐级失败摘要 → 内容无关字符串列表（provider:kind），R14。"""
+    return [f"{n}:{k}" for n, k in attempts]
+
+
 async def _transcribe(conn: _Conn, provider, seg: dict) -> None:
+    pcm = b"".join(seg["buf"])
     try:
-        text = await provider.transcribe(b"".join(seg["buf"]))
-        await _send(conn, {"type": "asr_final", "segment_id": seg["id"],
-                           "text": text, "path": seg["path"],
-                           "ts_ms": seg["ts_start"],
-                           "duration_ms": max(0, seg["ts_end"] - seg["ts_start"])})
+        text, used, attempts = await _run_provider(provider, pcm, seg["path"])
+        payload = {"type": "asr_final", "segment_id": seg["id"], "text": text,
+                   "provider": used, "path": seg["path"],
+                   "ts_ms": seg["ts_start"],
+                   "duration_ms": max(0, seg["ts_end"] - seg["ts_start"])}
+        if attempts:
+            # 降过级才带此字段：前端据此提示"当前用的是哪一级"。
+            payload["degraded"] = _degrade_payload(attempts)
+        await _send(conn, payload)
     except ASRError as e:
-        await _send(conn, {"type": "asr_error", "segment_id": seg["id"],
-                           "error": e.kind, "path": seg["path"],
-                           "ts_ms": seg["ts_start"]})
+        payload = {"type": "asr_error", "segment_id": seg["id"],
+                   "error": e.kind, "path": seg["path"],
+                   "ts_ms": seg["ts_start"]}
+        if getattr(e, "attempts", ()):
+            payload["degraded"] = _degrade_payload(e.attempts)
+        await _send(conn, payload)
     except (_ConnDead, asyncio.CancelledError):
         raise
     except Exception:
