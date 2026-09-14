@@ -28,6 +28,9 @@ NO_AUTH_CASES = [
     ("GET", "/model/download/x", None),
     ("GET", "/asr/providers", None),
     ("PUT", "/asr/provider", {}),
+    ("GET", "/asr/latency", None),
+    ("PUT", "/asr/latency", {}),
+    ("GET", "/diagnostics/audio", None),
 ]
 
 

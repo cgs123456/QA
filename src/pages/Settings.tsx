@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { apiGet, apiPost } from "../lib/api";
+import { ApiError, apiGet, apiPost, apiPut } from "../lib/api";
 
 const PROVIDERS = ["ollama", "openai", "custom"] as const;
 const PROVIDER_STORAGE_KEY = "interview-copilot.llm-provider";
+// bge 仍是向量检索的权重，与 ASR 模型走同一套下载通道（POST /model/download）。
+const BGE_MODEL = "bge-small-zh-v1.5";
 
 type DownloadFile = { downloaded: number; total: number | null; done: boolean };
 type DownloadStatus = {
@@ -13,9 +15,57 @@ type DownloadStatus = {
   error: string | null;
 };
 
+type AsrEntry = {
+  name: string;
+  display: string;
+  kind: "local" | "cloud";
+  model: string | null;
+  note: string;
+  ready: boolean;
+};
+
+type AsrCatalog = {
+  selected: string;
+  spec: { name: string; display: string; kind: string; model: string | null };
+  ready: boolean;
+  with_chain: boolean;
+  available: AsrEntry[];
+};
+
+type LatencyState = {
+  enabled: boolean;
+  cuda: boolean;
+  note: string;
+};
+
+type AudioDiagnostics = {
+  last_connection: Record<string, number> | null;
+  limits: { max_pending: number; max_segment_frames: number; send_timeout_s: number };
+  capture: { status: string; note: string };
+};
+
 function formatBytes(n: number | null): string {
   if (n == null || n < 0) return "?";
   return `${(n / 1048576).toFixed(1)} MiB`;
+}
+
+function DownloadProgress({ dl }: { dl: DownloadStatus }) {
+  return (
+    <div>
+      <p data-testid="download-status">
+        状态：{dl.status}（{dl.download_id}）
+      </p>
+      <ul>
+        {Object.entries(dl.files).map(([name, f]) => (
+          <li key={name}>
+            {name}：{formatBytes(f.downloaded)} / {formatBytes(f.total)}
+            {f.done ? " ✓" : ""}
+          </li>
+        ))}
+      </ul>
+      {dl.status === "error" && <p>错误：{dl.error}</p>}
+    </div>
+  );
 }
 
 export function Settings() {
@@ -25,16 +75,81 @@ export function Settings() {
   const [apiKey, setApiKey] = useState("");
   const [keyMessage, setKeyMessage] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState(false);
-  const [downloadId, setDownloadId] = useState<string | null>(null);
-  const [download, setDownload] = useState<DownloadStatus | null>(null);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const timerRef = useRef<number | undefined>(undefined);
+
+  // ---- ASR Provider（F6.2） ----
+  const [asr, setAsr] = useState<AsrCatalog | null>(null);
+  const [asrLoadError, setAsrLoadError] = useState<string | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const [asrMessage, setAsrMessage] = useState<string | null>(null);
+
+  // ---- 低延迟模式（task18：需 CUDA，无 GPU 时开关禁用） ----
+  const [latency, setLatency] = useState<LatencyState | null>(null);
+  const [latencyMessage, setLatencyMessage] = useState<string | null>(null);
+  const [latencyBusy, setLatencyBusy] = useState(false);
+
+  // ---- 音频诊断（task19：最近一次 WS 连接计数 + 限额；设备名待 Rust 接线） ----
+  const [diag, setDiag] = useState<AudioDiagnostics | null>(null);
+  const [diagError, setDiagError] = useState<string | null>(null);
+
+  async function refreshDiag() {
+    setDiagError(null);
+    try {
+      setDiag(await apiGet<AudioDiagnostics>("/diagnostics/audio"));
+    } catch (err) {
+      setDiagError(String(err));
+    }
+  }
+
+  // ---- 模型下载（按模型键区分；断点续传由 sidecar downloader 保证） ----
+  const [downloads, setDownloads] = useState<Record<string, DownloadStatus>>({});
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
+  const timersRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     window.localStorage.setItem(PROVIDER_STORAGE_KEY, provider);
   }, [provider]);
 
-  useEffect(() => () => window.clearInterval(timerRef.current), []);
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      for (const t of Object.values(timers)) window.clearInterval(t);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<AsrCatalog>("/asr/providers")
+      .then((catalog) => {
+        if (!cancelled) setAsr(catalog);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setAsrLoadError(
+            err instanceof ApiError && err.status === 404
+              ? "当前 sidecar 不支持 ASR 切换（需更新 sidecar）"
+              : String(err),
+          );
+        }
+      });
+    apiGet<LatencyState>("/asr/latency")
+      .then((st) => {
+        if (!cancelled) setLatency(st);
+      })
+      .catch(() => {
+        // 旧 sidecar 无此端点：开关区隐藏（asr 目录 404 提示已覆盖需升级）。
+        if (!cancelled) setLatency(null);
+      });
+    apiGet<AudioDiagnostics>("/diagnostics/audio")
+      .then((d) => {
+        if (!cancelled) setDiag(d);
+      })
+      .catch((err) => {
+        if (!cancelled) setDiagError(String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function saveKey(e: React.FormEvent) {
     e.preventDefault();
@@ -56,36 +171,90 @@ export function Settings() {
     }
   }
 
-  async function pollDownload(id: string) {
-    window.clearInterval(timerRef.current);
+  async function switchAsrProvider(name: string) {
+    if (asr != null && name === asr.selected) return;
+    setSwitching(true);
+    setAsrMessage(null);
+    try {
+      // 切换只换 sidecar 进程内引用（权重懒加载），对下一段音频即时生效，无需重启。
+      const catalog = await apiPut<AsrCatalog>("/asr/provider", { name });
+      setAsr(catalog);
+      const entry = catalog.available.find((e) => e.name === catalog.selected);
+      setAsrMessage(
+        entry != null && !entry.ready && entry.kind === "local"
+          ? `已切换到 ${entry.display}，即时生效；权重未下载（见下方），未就绪前该级会降级。`
+          : `已切换到 ${catalog.spec.display}，即时生效（下一段音频起用）。`,
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setAsrMessage("切换失败：云端 ASR 需要先在上方保存 API Key（openai 槽位）。");
+      } else {
+        setAsrMessage(`切换失败：${String(err)}`);
+      }
+    } finally {
+      setSwitching(false);
+    }
+  }
+
+  async function setLowLatency(enabled: boolean) {
+    setLatencyBusy(true);
+    setLatencyMessage(null);
+    try {
+      // 开关只影响下一段音频；在途段不受影响（与 provider 切换同语义）。
+      const st = await apiPut<LatencyState>("/asr/latency", { enabled });
+      setLatency(st);
+      setLatencyMessage(
+        st.enabled ? "低延迟模式已开启（下一段起出流式部分结果）。"
+                   : "低延迟模式已关闭（整段路径，与之前行为一致）。",
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setLatencyMessage("无法开启：本机无可用 CUDA（需 GPU，CPU 请保持关闭）。");
+      } else {
+        setLatencyMessage(`切换失败：${String(err)}`);
+      }
+    } finally {
+      setLatencyBusy(false);
+    }
+  }
+
+  function pollDownload(model: string, id: string) {
+    const prev = timersRef.current[model];
+    if (prev != null) window.clearInterval(prev);
     const tick = async () => {
       try {
         const status = await apiGet<DownloadStatus>(`/model/download/${id}`);
-        setDownload(status);
+        setDownloads((m) => ({ ...m, [model]: status }));
         if (status.status === "done" || status.status === "error") {
-          window.clearInterval(timerRef.current);
+          const t = timersRef.current[model];
+          if (t != null) window.clearInterval(t);
         }
       } catch (err) {
-        setDownloadError(String(err));
-        window.clearInterval(timerRef.current);
+        setDownloadErrors((m) => ({ ...m, [model]: String(err) }));
+        const t = timersRef.current[model];
+        if (t != null) window.clearInterval(t);
       }
     };
-    await tick();
-    timerRef.current = window.setInterval(tick, 1000);
+    void tick();
+    timersRef.current[model] = window.setInterval(tick, 1000);
   }
 
-  async function startDownload() {
-    setDownload(null);
-    setDownloadError(null);
+  async function startDownload(model: string) {
+    setDownloadErrors((m) => {
+      const next = { ...m };
+      delete next[model];
+      return next;
+    });
     try {
+      // 缺省即 bge（兼容旧行为）；ASR 模型传模型键。续传由 sidecar 按 .part 续写。
+      const body = model === BGE_MODEL ? {} : { model };
       const { download_id } = await apiPost<{ download_id: string }>(
         "/model/download",
-        {},
+        body,
       );
-      setDownloadId(download_id);
-      await pollDownload(download_id);
+      pollDownload(model, download_id);
     } catch (err) {
-      setDownloadError(String(err));
+      setDownloadErrors((m) => ({ ...m, [model]: String(err) }));
     }
   }
 
@@ -131,27 +300,128 @@ export function Settings() {
       </div>
 
       <div>
-        <h3>模型下载（bge-small-zh-v1.5）</h3>
-        <button data-testid="model-download" type="button" onClick={startDownload}>
-          下载/校验模型
-        </button>
-        {downloadError != null && <p>下载失败：{downloadError}</p>}
-        {download != null && (
-          <div>
-            <p data-testid="download-status">
-              状态：{download.status}
-              {downloadId != null ? `（${downloadId}）` : ""}
-            </p>
+        <h3>ASR Provider（语音转写，即时生效）</h3>
+        {asrLoadError != null && <p>ASR 目录加载失败：{asrLoadError}</p>}
+        {asr == null && asrLoadError == null && <p>加载中…</p>}
+        {asr != null && (
+          <>
+            <label>
+              Provider：
+              <select
+                data-testid="asr-provider-select"
+                value={asr.selected}
+                disabled={switching}
+                onChange={(e) => void switchAsrProvider(e.currentTarget.value)}
+              >
+                {asr.available.map((e) => (
+                  <option key={e.name} value={e.name}>
+                    {e.display}
+                    {e.ready ? "" : "（未就绪）"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {switching && <p>切换中…</p>}
+            {asrMessage != null && <p data-testid="asr-message">{asrMessage}</p>}
             <ul>
-              {Object.entries(download.files).map(([name, f]) => (
-                <li key={name}>
-                  {name}：{formatBytes(f.downloaded)} / {formatBytes(f.total)}
-                  {f.done ? " ✓" : ""}
+              {asr.available.map((e) => (
+                <li key={e.name}>
+                  {e.display}：
+                  {e.kind === "cloud"
+                    ? "需要 API Key（上方保存 openai 槽位）"
+                    : e.ready
+                      ? "权重就绪 ✓"
+                      : `权重未下载（模型 ${e.model}，约 200MB）`}
+                  {e.note !== "" && ` —— ${e.note}`}
+                  {e.kind === "local" && e.model != null && (
+                    <div>
+                      <button
+                        data-testid={`model-download-${e.model}`}
+                        type="button"
+                        onClick={() => void startDownload(e.model as string)}
+                      >
+                        下载/校验 {e.model}
+                      </button>
+                      {downloadErrors[e.model] != null && (
+                        <p>下载失败：{downloadErrors[e.model]}</p>
+                      )}
+                      {downloads[e.model] != null && (
+                        <DownloadProgress dl={downloads[e.model]} />
+                      )}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
-            {download.status === "error" && <p>错误：{download.error}</p>}
-          </div>
+          </>
+        )}
+      </div>
+
+      <div>
+        <h3>低延迟模式（流式部分结果，需 CUDA）</h3>
+        {latency == null && <p>加载中…（旧 sidecar 无此能力则不显示）</p>}
+        {latency != null && (
+          <>
+            <label>
+              <input
+                data-testid="latency-toggle"
+                type="checkbox"
+                checked={latency.enabled}
+                disabled={latencyBusy || (!latency.enabled && !latency.cuda)}
+                onChange={(e) => void setLowLatency(e.currentTarget.checked)}
+              />
+              说话过程中即时出字（asr_partial）
+            </label>
+            {!latency.cuda && (
+              <p data-testid="latency-nocuda">
+                本机无可用 CUDA，开关已禁用；CPU 请保持关闭（整段路径不受影响）。
+              </p>
+            )}
+            {latencyMessage != null && <p data-testid="latency-message">{latencyMessage}</p>}
+            <p>{latency.note}</p>
+          </>
+        )}
+      </div>
+
+      <div>
+        <h3>模型下载（bge-small-zh-v1.5）</h3>
+        <button data-testid="model-download" type="button" onClick={() => void startDownload(BGE_MODEL)}>
+          下载/校验模型
+        </button>
+        {downloadErrors[BGE_MODEL] != null && <p>下载失败：{downloadErrors[BGE_MODEL]}</p>}
+        {downloads[BGE_MODEL] != null && (
+          <DownloadProgress dl={downloads[BGE_MODEL]} />
+        )}
+      </div>
+
+      <div>
+        <h3>音频诊断（最近一次连接，内容无关）</h3>
+        <button data-testid="diag-refresh" type="button" onClick={() => void refreshDiag()}>
+          刷新
+        </button>
+        {diagError != null && <p>诊断加载失败：{diagError}</p>}
+        {diag != null && (
+          <>
+            {diag.last_connection == null ? (
+              <p data-testid="diag-empty">尚无音频连接（抓包/回放一次后这里会有计数）。</p>
+            ) : (
+              <ul data-testid="diag-counters">
+                {Object.entries(diag.last_connection).map(([k, v]) => (
+                  <li key={k}>
+                    {k}：{v}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p>
+              限额：待转写 ≤{diag.limits.max_pending}／单段 ≤{diag.limits.max_segment_frames} 帧／
+              下行超时 {diag.limits.send_timeout_s}s
+            </p>
+            <p data-testid="diag-capture">
+              当前设备：{diag.capture.status === "pending" ? "待采集服务接线（Rust 侧）" : diag.capture.status}
+              ——{diag.capture.note}
+            </p>
+          </>
         )}
       </div>
     </div>

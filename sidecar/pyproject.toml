@@ -16,10 +16,18 @@ dependencies = [
     # 本地 ASR（task15）：base 档 int8 CPU。权重不进包，经 registry 下载器按
     # SHA256 落盘（sidecar/models/faster-whisper-base）。
     "faster-whisper>=1.0",
+    # 多 ASR Provider（task17）：SenseVoice + Paraformer 经 sherpa-onnx（ONNX，
+    # 免 torch）。选型结论：funasr 拖 PyTorch（~2 GB），sherpa-onnx 两个 wheel
+    #（sherpa-onnx + sherpa-onnx-core）合计约 18 MiB —— 体积差两个数量级。
+    # 实测版本 1.13.8（`OfflineRecognizer.from_sense_voice/from_paraformer`）。
+    "sherpa-onnx>=1.13",
 ]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
+# task19 回归测量专用（不进主锁文件、不进包）：VAD 对比双 provider 适配器用。
+# CI/回归机：pip install -e ./sidecar[audio-eval]
+audio-eval = ["webrtcvad-wheels>=2.0", "silero-vad>=6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

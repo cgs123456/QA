@@ -1,0 +1,19 @@
+{
+  "provider": "paraformer/int8/cpu",
+  "segment_s": 3.0,
+  "n": 3,
+  "cold_load_ms": 7186.3,
+  "asr_median_ms": 1144.6,
+  "asr_min_ms": 1131.2,
+  "asr_max_ms": 1439.7,
+  "hyp_text_len": [
+    15,
+    15,
+    15
+  ],
+  "direct_qa_ms_m1": 2.4,
+  "machine": "Windows AMD64, Intel64 Family 6 Model 60 Stepping 3, GenuineIntel, Python 3.12.10",
+  "fixed_total_ms": 1147.0,
+  "fixed_budget_ms": 4000,
+  "fixed_pass": true
+}

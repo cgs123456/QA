@@ -48,6 +48,12 @@ sidecar/vendor/dict/*
 sidecar/models/*
 !sidecar/models/.gitkeep
 
+# 1b regression recordings (task19): real human voice, local only, never commit.
+# Manifest + guide stay in repo; wavs + annotations stay on the recording machine.
+sidecar/tests/audio_samples/*.wav
+sidecar/tests/audio_samples/*.json
+!sidecar/tests/audio_samples/manifest.json
+
 # Local runtime
 *.db
 *.db-wal

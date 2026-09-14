@@ -213,7 +213,9 @@ def main() -> int:
     ap.add_argument("--durations", default="3,15", help="逗号分隔的段时长（秒）")
     ap.add_argument("--repeat", type=int, default=2)
     ap.add_argument("--timeout", type=float, default=180.0, help="单段等待上限（秒）")
-    ap.add_argument("--provider", choices=["local", "stub"], default="local")
+    ap.add_argument("--provider", choices=["local", "stub", "sensevoice", "paraformer"],
+                    default="local",
+                    help="local=faster-whisper；sensevoice/paraformer 经 sherpa-onnx（需权重就位）")
     ap.add_argument("--out", default=None, help="追加写入的 markdown 文件")
     ap.add_argument("--note", default="")
     args = ap.parse_args()
@@ -230,9 +232,21 @@ def main() -> int:
         provider_name = "stub"
     else:
         sys.path.insert(0, str(SIDECAR_SRC))
-        from asr.faster_whisper_provider import FasterWhisperProvider
+        if args.provider == "local":
+            from asr.faster_whisper_provider import FasterWhisperProvider
 
-        provider = FasterWhisperProvider()
+            provider = FasterWhisperProvider()
+            label = f"{provider.name}/{provider.model}/{provider.compute_type}"
+        elif args.provider == "sensevoice":
+            from asr.sensevoice_provider import SenseVoiceProvider
+
+            provider = SenseVoiceProvider()
+            label = f"{provider.name}/int8"
+        else:
+            from asr.paraformer_provider import ParaformerProvider
+
+            provider = ParaformerProvider()
+            label = f"{provider.name}/int8"
         if not provider.is_ready():
             print("权重未就位：先跑 `POST /model/download` 或 ensure_model_files()。",
                   file=sys.stderr)
@@ -240,7 +254,7 @@ def main() -> int:
         t0 = time.perf_counter()
         provider.warmup()
         load_ms = (time.perf_counter() - t0) * 1000.0
-        provider_name = f"{provider.name}/{provider.model}/{provider.compute_type}"
+        provider_name = label
 
     import platform
 

@@ -64,6 +64,9 @@ def main() -> None:
         # av 是 faster_whisper.audio 的顶层 import——都收不到就"装得上跑不了"。
         "--collect-all", "ctranslate2",
         "--collect-all", "av",
+        # task17: sherpa_onnx ships a native extension loaded dynamically
+        # (same "runs-but-fails" class as ctranslate2 above).
+        "--collect-all", "sherpa_onnx",
         "--distpath", args.distpath,
         "--workpath", args.workpath,
         "--specpath", args.workpath,

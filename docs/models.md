@@ -56,3 +56,34 @@
 > 注：task15 原文写「~75MB」，实测 base 档为 138.5 MiB；~75MB 对应 `tiny` 档。
 > 本轮按 provider 规格取 `base`，尺寸以实测为准。
 
+## sense-voice（ASR，sherpa-onnx ONNX int8，中英日韩粤，task17）
+
+- 转换：`csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17`
+  （base `FunAudioLLM/SenseVoiceSmall`）
+- 镜像顺序：hf-mirror → HF（**ModelScope 无对应镜像**：2026-09-14 实测
+  `modelscope.cn/api/v1/models/csukuangfj/...` → 404；ModelScope 上的
+  `iic/SenseVoiceSmall` 是 PyTorch/funasr 格式，与 ONNX 权重不通用。
+  按既有纪律「缺失的镜像不列入、不调序」）
+- 本地：`sidecar/models/sense-voice/`（**约 228 MiB**，两文件合计）
+- 运行时：`sherpa-onnx==1.13.8`（见 lock；`sherpa-onnx` + `sherpa-onnx-core`
+  两 wheel 合计约 18 MiB —— funasr 方案需 PyTorch ~2 GB，已否决）；
+  PyInstaller 经 `--collect-all sherpa_onnx` 收包（原生扩展动态加载）。
+
+| 文件 | 尺寸 | SHA256 | 备注 |
+|---|---|---|---|
+| `model.int8.onnx` | 239,233,841 | `c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51` | HF LFS oid（权威），下载后逐字节复核通过 |
+| `tokens.txt` | 315,894 | `f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc` | 非 LFS，首下实测 pin |
+
+## paraformer-zh（ASR，sherpa-onnx ONNX int8，中文专用，task17）
+
+- 转换：`csukuangfj/sherpa-onnx-paraformer-zh-2023-09-14`
+  （base `damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404`）
+- 镜像顺序：hf-mirror → HF（ModelScope 无对应镜像，同上）
+- 本地：`sidecar/models/paraformer-zh/`（**约 232 MiB**，两文件合计）
+- 运行时：同 sense-voice（同一 `sherpa-onnx`，不另增体积）。
+
+| 文件 | 尺寸 | SHA256 | 备注 |
+|---|---|---|---|
+| `model.int8.onnx` | 243,371,218 | `f36a0433bcf096bd6d6f11b80a3ac8bed110bdca632fe0d731df8d1a84475945` | HF LFS oid（权威），下载后逐字节复核通过 |
+| `tokens.txt` | 75,756 | `59aba8873a2ed1e122c25fee421e25f283b63290efbde85c1f01a853d83cb6e6` | 非 LFS，首下实测 pin |
+

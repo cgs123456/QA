@@ -167,3 +167,87 @@ provider `faster-whisper` base / int8 / CPU；环境 Windows AMD64，Python 3.13
   但**转写文本无意义**，不得据此判断识别质量。
 - 长段（>30s）与更大权重档位的时延：端点规格单段上限 15s，超出场景不在本轮范围。
 - 双路并发（loopback + mic 同时说话）时延：本轮为单路串行口径。
+
+---
+
+# 三 Provider 同样本横向对比（task17，2026-09-14）
+
+> 口径：同一批样本（`zh.wav` 5.59s 中文 / `en.wav` 7.15s 英文）分别走三个本地
+> provider（均为整段转写、CPU）。时延 = segment_end 发出 → asr_final 收到
+> （含 WS 传输，与上节 task-15 口径一致）。
+> 复现：`python scripts/bench_asr_latency.py --provider {local,sensevoice,paraformer}`。
+
+## 延迟与输出
+
+| 样本 | sensevoice | paraformer | faster-whisper（base/int8） |
+|---|---|---|---|
+| zh 5.59s | **365 ms** `开饭时间早上九点至下午五点` | **315 ms** `开放时间早上九点至下午五点` | **1059 ms** `開放時間早上9點,墜下5點` |
+| en 7.15s | **467 ms** 近满分级 | **409 ms** 垃圾输出（中文专用，预期内） | **958 ms** 可用 |
+
+相对观察（非 WER，上游 README 无参考转写、真 WER 无法计算，需用户提供标注数据后补）：
+
+1. **sensevoice 的 zh 输出与上游官方 non-ITN 示例逐字一致** → sherpa-onnx 接线正确性已交叉验证。
+2. **faster-whisper 本样本输出繁体**（`開放時間…墜下5點`，且有错字）：base 档中文场景弱于两个专用模型，延迟也是 ~3×。
+3. **paraformer 是中文专用**：中文最快（315 ms），英文不可用 —— 产品内需按场景提示，不可静默选用。
+4. 延迟量级：sherpa-onnx 两路均为 ~300–470 ms（约为 faster-whisper 的 1/3）。
+
+## 体积账
+
+| 项 | 值 |
+|---|---|
+| sense-voice 权重 | 239,233,841 + 315,894 B（**约 228 MiB**，见 `docs/models.md`） |
+| paraformer-zh 权重 | 243,371,218 + 75,756 B（**约 232 MiB**） |
+| sherpa-onnx 运行时 | `sherpa-onnx` + `sherpa-onnx-core` 两 wheel 合计约 **18 MiB** |
+| funasr 方案（已否决） | 拖 PyTorch **~2 GB** —— 在 317.5 MiB 安装包定位下差两个数量级 |
+
+权重不进包（经 `/model/download` 按 SHA256 落盘），故打包体积增量仅运行时
+约 18 MiB；当前 1.15× 上限 ≈ 383 MiB，余量充足。
+
+## 未测（挂起项，不粉饰）
+
+- **真 WER**：需带标注的中文/英文评测集（含专有名词/中英混说）+ 人耳复核。
+  本节只有延迟与相对观察，不得据此宣称识别率数字。
+- 长段（>30s）与双路并发下的三路对比：单路串行口径。
+
+---
+
+# 流式部分结果决策记录（task18，2026-09-14）
+
+## 环境实测（本机，决定“跳过 GPU 验证”的依据）
+
+| 项 | 值 |
+|---|---|
+| `nvidia-smi` | 不存在（无 NVIDIA 驱动/GPU） |
+| `torch.cuda.is_available()` | `False`（CPU 版 torch，`numpy` 未装不影响结论） |
+| CPU | 4 核 |
+| `onnxruntime` | 未安装；`CUDAExecutionProvider` 无 |
+
+结论：**本机无 CUDA，`PUT /asr/latency {enabled:true}` 按设计返回 409**
+（单测锁定该门控）。DoD 的“GPU 环境首片段 ~1.5s（实测落盘）”在本机
+**无法执行，按任务标题记为决策跳过**，不伪造数字。
+
+## CPU 默认关闭的理由（记录在案，不是懒惰）
+
+- task-15 实测：faster-whisper base 在 CPU 上整段转写 ~1.9s（3s/15s 段几乎
+  同耗时，whisper 按 30s 窗编码）。
+- 流式每 ~1.5s 对滚动缓冲做一次**全量**转写：在 CPU 上等于给本已 1.9s 的
+  转写再叠加 1 probe/1.5s 的负载，延迟收益为负（探一次 ~1.9s，确认还要等
+  第二轮），只剩“早看到跳动的字”的负体验。
+- 故 CPU 上默认关闭是**算力账**的结果：`describe_latency().note` 与设置页
+  文案都明示“CPU 请保持关闭”，开关在 `cuda=false` 时直接禁用（409 双保险）。
+
+## 已交付（无 GPU 可验证的部分，本机实测）
+
+- `asr/local_agreement.py`：前缀确认单调性、节拍帧计数派生、静音暂停/即时恢复
+  —— `test_local_agreement.py` **13 passed**；
+- 开关门控 + 关闭回归（零 partial、provider 单次全量调用、与 final 同段 id、
+  探测失败不下行 error、迟到探测丢弃）—— `test_low_latency.py` **10 passed**；
+- 开启路径的端到端时延（首片段 ~1.5s）待 GPU 机器执行以下步骤后落盘到本节：
+  1. `PUT /asr/latency {enabled:true}` → 200（`cuda:true`）；
+  2. 说话 5s，记录首个 `asr_partial` 的 `ts_ms` 与到达时间差；
+  3. 确认同一 `segment_id` 的 `asr_final` 全文与 partial 前缀一致（无撤回）。
+
+## 待标定（初值，不代表结论）
+
+- `DEFAULT_SILENCE_RMS = 0.01`、`SILENCE_WINDOW ≈ 0.5s`：合成信号上有效，
+  真机底噪未知，GPU 联调时与首片段时延一起标定。

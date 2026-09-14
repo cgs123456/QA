@@ -29,8 +29,13 @@ Tauri 校验 `protocol_version`，不匹配 → `sidecar://degraded`（version_m
 | POST | `/settings/llm-secret` | 是 | `{provider,api_key}` → `{"stored":provider}`；不回显 key；400 空值 |
 | POST | `/qa/ask` | 是 | `{question,store_id?,provider?}` → `{"task_id"}`；400 空问/无当前库；404 store 不存在 |
 | GET | `/qa/stream?task_id=` | 是 | SSE（见下）；未知/过期 task → 404 |
-| POST | `/model/download` | 是 | `{model?}`（缺省 bge-small-zh-v1.5）→ `{"download_id"}`；400 未知模型 |
+| POST | `/model/download` | 是 | `{model?}`（缺省 bge-small-zh-v1.5；ASR 权重传 `sense-voice` / `paraformer-zh` / `faster-whisper-base`）→ `{"download_id"}`；400 未知模型 |
 | GET | `/model/download/{id}` | 是 | `{"download_id","status","files":{name:{"downloaded","total","done"}},"error"}`；未知 id → 404 |
+| GET | `/asr/providers` | 是 | ASR 目录 + 当前选择（F6.2 设置页初始渲染）→ `{selected,spec,ready,with_chain,available[]}`；entry 含 `name/display/kind/model/note/ready`，内容无关（R14） |
+| PUT | `/asr/provider` | 是 | `{name}` 切换 provider，**即时生效**（下一段音频起用，无需重启；在途段仍用旧引用）；未知名 → 400；构造失败（如云端缺 key）→ 409 `{"error": kind}` 且保持原选择不变 |
+| GET | `/asr/latency` | 是 | 低延迟模式能力快照（task18，设置页开关渲染）→ `{enabled,cuda,note}`，内容无关 |
+| PUT | `/asr/latency` | 是 | `{enabled}` 开/关低延迟模式，只影响**下一段**；开启要求 CUDA 就绪，否则 409 `{"error":"unavailable"}`；关闭永远允许 |
+| GET | `/diagnostics/audio` | 是 | 最近一次音频 WS 连接的内容无关计数 + 限额（task19 诊断面板）→ `{last_connection|null,limits,capture:{status:pending}}`；从未建连是合法 null，不是 404 |
 
 ## SSE（GET /qa/stream，禁缓冲头）
 
@@ -49,6 +54,8 @@ task 在读毕或 TTL 60s 后清理；客户端断开取消后台任务。
 PRD 只定义 POST 触发；进度轮询约定如下：`status ∈ queued/downloading/done/error`；
 `files[name] = {downloaded,total,done}`；`error` 仅失败时有值（种类文本，无敏感内容）。
 下载在后台线程跑（不断事件循环），断点续传 + SHA256（见 `models/downloader.py`）。
+ASR 权重（`sense-voice` / `paraformer-zh`）走同一通道：续传/校验/进度语义不变，
+前端按模型键分别发起、分别轮询。
 
 ## WS（Phase 1b，预留未实现）
 
@@ -86,8 +93,9 @@ Rust 生产端（1b-3 落地）：`audio::frame::encode_ws_frame(seq, ts_ms, &pc
 
 ### 下行消息（sidecar → Rust/前端，同连接 JSON，R12）
 
-`asr_start / asr_partial（本阶段不发，整段转写）/ asr_final / asr_error`，
-必含 `segment_id` / `path` / `ts_ms`；final 另含 `text` + `duration_ms`
+`asr_start / asr_partial（默认不发；低延迟模式开启时按 task18 下发）/ asr_final / asr_error`，
+必含 `segment_id` / `path` / `ts_ms`；partial 另含 `text`（至今确认的前缀，全量替换语义，
+**与本段 final 同一 `segment_id`**）；final 另含 `text` + `duration_ms`
 （起止取事件时间戳，非挂钟）；error 的 `error` 取值：
 `provider_timeout|provider_error|all_providers_failed`（ provider 故障）、
 `unavailable`（provider 不可用：权重未就位 / 依赖未装）、
@@ -96,7 +104,7 @@ Rust 生产端（1b-3 落地）：`audio::frame::encode_ws_frame(seq, ts_ms, &pc
 `dropped_overload`、`segment_truncated`（见下）。
 
 **task15 扩充**：`asr_final` 增 `provider`（**实际出力**的那一级名，如
-`faster-whisper` / `local-backup` / `cloud-rest`）；发生过降级时另增
+`faster-whisper` / `sensevoice` / `paraformer` / `local-backup` / `cloud-rest`）；发生过降级时另增
 `degraded`，为 `["provider:error_kind", ...]` 的逐级失败摘要。
 `asr_error` 在降级链全灭时同样带 `degraded`。两者均内容无关（R14）。
 
@@ -121,7 +129,7 @@ Rust 生产端（1b-3 落地）：`audio::frame::encode_ws_frame(seq, ts_ms, &pc
 | 事件名 | 载荷 | 产生处 | 说明 |
 |---|---|---|---|
 | `asr://start` | 下行 `asr_start` JSON 原样 | `uplink.rs` | 语义见上（segment_start） |
-| `asr://partial` | 下行 `asr_partial` JSON | `uplink.rs` | 本阶段 sidecar 不发（整段转写） |
+| `asr://partial` | 下行 `asr_partial` JSON（含 `text` 确认前缀，与 final 同 `segment_id`） | `uplink.rs` | 仅低延迟模式开启时 sidecar 下发（task18）；关闭时不发 |
 | `asr://final` | 下行 `asr_final` JSON（含 `text`/`path`/`ts_ms`/`duration_ms`/`provider`/`degraded?`） | `uplink.rs` | 提词触发入口 |
 | `asr://error` | 下行 `asr_error` JSON | `uplink.rs` | |
 | `teleprompter://trigger` | 空（`null`） | `shortcuts.rs` | F1.6 手动提词；前端取最近一段转写，**打断 3s 锁定期** |
@@ -129,7 +137,7 @@ Rust 生产端（1b-3 落地）：`audio::frame::encode_ws_frame(seq, ts_ms, &pc
 
 **契约要点**：
 
-- `asr://final` 的载荷含转写正文，属 UI 专用：**不得落日志**（R14）。
+- `asr://final` / `asr://partial` 的载荷含转写正文，属 UI 专用：**不得落日志**（R14）。
 - 快捷键事件只带 `null` 载荷，不带任何上下文 —— 「最近一段转写」由前端的状态机持有。
   理由：Rust 侧不保存转写文本，就不存在「文本被日志/崩溃转储带出」的路径。
 - 快捷键绑定：`CmdOrCtrl+Shift+R`（采集开关）、`CmdOrCtrl+Shift+Space`（手动提词）。

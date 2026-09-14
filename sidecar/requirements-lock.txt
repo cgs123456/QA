@@ -36,6 +36,12 @@ regex==2026.9.10
 rich==15.0.0
 safetensors==0.8.0
 shellingham==1.5.4
+# task17：sherpa-onnx==1.13.8 实测版本（sherpa-onnx + sherpa-onnx-core 两 wheel
+# 合计约 18 MiB；funasr 方案需 PyTorch ~2 GB，已否决）。
+# 注：本行手工追加——本机无可用 PyPI 源（直连超时），未做 clean-venv freeze；
+# 有网机器跑 `pip install -r requirements-lock.txt` 后以 freeze 复核，
+# 重点确认附带的 sherpa-onnx-core pin。
+sherpa-onnx==1.13.8
 sqlite-vec==0.1.9
 starlette==1.6.0
 tokenizers==0.23.2

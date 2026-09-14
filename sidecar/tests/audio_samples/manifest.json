@@ -1,0 +1,66 @@
+{
+  "_schema": "task19: 每个槽位一个 wav + 同名标注 json。status: missing=待用户录制, ready=已落盘可测。wav 永不入库（见 .gitignore），此处只记 sha256 与录制说明。",
+  "_annotation": "标注 json 字段：transcript(逐字转写)/segments[{start_ms,end_ms}]/noise(quiet|噪声源)/speakers(人数)。",
+  "samples": [
+    {
+      "id": "zh-quiet-1",
+      "lang": "zh",
+      "condition": "quiet",
+      "wav": "zh-quiet-1.wav",
+      "annotation": "zh-quiet-1.json",
+      "status": "missing",
+      "sha256": null,
+      "note": null
+    },
+    {
+      "id": "zh-noisy-1",
+      "lang": "zh",
+      "condition": "noisy",
+      "wav": "zh-noisy-1.wav",
+      "annotation": "zh-noisy-1.json",
+      "status": "missing",
+      "sha256": null,
+      "note": null
+    },
+    {
+      "id": "zh-multi-1",
+      "lang": "zh",
+      "condition": "multi",
+      "wav": "zh-multi-1.wav",
+      "annotation": "zh-multi-1.json",
+      "status": "missing",
+      "sha256": null,
+      "note": null
+    },
+    {
+      "id": "en-quiet-1",
+      "lang": "en",
+      "condition": "quiet",
+      "wav": "en-quiet-1.wav",
+      "annotation": "en-quiet-1.json",
+      "status": "missing",
+      "sha256": null,
+      "note": null
+    },
+    {
+      "id": "en-noisy-1",
+      "lang": "en",
+      "condition": "noisy",
+      "wav": "en-noisy-1.wav",
+      "annotation": "en-noisy-1.json",
+      "status": "missing",
+      "sha256": null,
+      "note": null
+    },
+    {
+      "id": "en-multi-1",
+      "lang": "en",
+      "condition": "multi",
+      "wav": "en-multi-1.wav",
+      "annotation": "en-multi-1.json",
+      "status": "missing",
+      "sha256": null,
+      "note": null
+    }
+  ]
+}

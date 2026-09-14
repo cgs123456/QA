@@ -39,6 +39,19 @@ task-14 明确要求「有界队列，满则丢最旧 + 告警（R13）」，故
 否则读 `asr.runtime` 的进程级切换板（`ASRSwitchboard`）。效果：
 设置页切换对**下一段**生效，无需重启；在途段仍用旧引用（引用替换原子）。
 切换板构造失败（如切到云端但缺 key）→ 本段 `asr_error`，种类名即 `ASRError.kind`。
+
+**task18 低延迟模式（记录）**：`segment_start` 时快照一次
+`asr.runtime.is_low_latency()`（测试覆盖 `_LATENCY_OVERRIDE` 优先），
+为该段决定是否挂 `SegmentStreamer`（`asr/local_agreement.py`）：
+
+- 开启：语音活跃期每 ~1.5s 对滚动缓冲探测一次，两次前缀一致才下行
+  `asr_partial`（与本段最终 `asr_final` **同一 segment_id**，坑位要求）；
+  静音暂停探测；在途只允许 1 个探测（忙则跳过本轮节拍，不排队）。
+- 关闭（默认）：`streamer` 为 None，`_on_audio` 只多一次 `is None` 判断，
+  其余与 task15 **逐字一致**（回归单测锁定：零 partial、provider 只调一次）。
+
+探测是尽力而为：失败/超时只记内容无关的 warning（R14），**不下行 asr_error** ——
+`segment_end` 的整段转写才是交代，partial 从不代替 final。
 """
 
 import asyncio
@@ -48,6 +61,8 @@ from collections import deque
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from asr import runtime as asr_runtime
+from asr.local_agreement import SegmentStreamer
 from asr.provider import ASRError
 from core.auth import get_token
 
@@ -70,6 +85,9 @@ MAX_SEGMENT_FRAMES = 2000
 SEND_TIMEOUT_S = 5.0
 
 _PROVIDER = None
+# 低延迟模式测试覆盖：None = 跟随 `asr.runtime` 开关；True/False = 强制开/关。
+# 与 `set_asr_provider` 同一模式（既有用例不受 task18 影响）。
+_LATENCY_OVERRIDE: bool | None = None
 # Diagnostics hook: counters of the most recently closed connection. Kept so
 # tests (and a future /diagnostics route) can assert on drops/gaps, which are
 # otherwise invisible to the peer by design (R14: no content, counters only).
@@ -85,6 +103,19 @@ def set_asr_provider(provider) -> None:
     """
     global _PROVIDER
     _PROVIDER = provider
+
+
+def set_low_latency_override(value: bool | None) -> None:
+    """**覆盖**低延迟开关（测试注入用）。传 `None` 即回到 runtime 开关。"""
+    global _LATENCY_OVERRIDE
+    _LATENCY_OVERRIDE = value
+
+
+def _latency_enabled() -> bool:
+    """本段是否挂流式探测器。segment_start 时快照，中途改开关只影响下一段。"""
+    if _LATENCY_OVERRIDE is not None:
+        return _LATENCY_OVERRIDE
+    return asr_runtime.is_low_latency()
 
 
 def current_provider():
@@ -119,6 +150,9 @@ def _new_counters() -> dict:
         "dropped_overload": 0,
         "dropped_oldest": 0,
         "vad_heartbeat": 0,
+        # task18（内容无关计数）：发起的滚动探测次数 / 实际下行的 partial 数。
+        "partial_probes": 0,
+        "partials_sent": 0,
     }
 
 
@@ -128,7 +162,8 @@ class _ConnDead(Exception):
 
 class _Conn:
     __slots__ = ("ws", "alive", "path", "seg_counter", "open_seg",
-                 "expected_seq", "in_flight", "counters", "send_lock")
+                 "expected_seq", "in_flight", "counters", "send_lock",
+                 "probe_in_flight")
 
     def __init__(self, ws: WebSocket):
         self.ws = ws
@@ -140,6 +175,9 @@ class _Conn:
         self.in_flight = 0
         self.counters = _new_counters()
         self.send_lock = asyncio.Lock()
+        # 在途滚动探测数（task18）：上限 1，忙则跳过本轮节拍。独立于整段转写的
+        # in_flight —— 慢探测既不能触发 dropped_overload，也不能挡住 final。
+        self.probe_in_flight = 0
 
 
 async def _send(conn: _Conn, payload: dict) -> None:
@@ -237,6 +275,59 @@ async def _transcribe(conn: _Conn, provider, seg: dict) -> None:
         conn.in_flight -= 1
 
 
+# task18 滚动探测超时：与整段降级超时同口径（`max(5s, 3×缓冲时长)`），
+# 超时只丢本轮探测（finally 释放槽位），不影响 final。
+PROBE_TIMEOUT_FACTOR = 3.0
+PROBE_MIN_TIMEOUT_S = 5.0
+
+
+async def _probe(conn: _Conn, seg: dict) -> None:
+    """一次滚动探测：转写本段至今缓冲 → 前缀确认 → 有新增才下行 asr_partial。
+
+    尽力而为：provider 缺失/构造失败/转写失败/超时，全部静默丢弃（记一条
+    内容无关的 warning），**不下行 asr_error** —— 交代永远由 segment_end
+    的整段路径给，partial 从不代替 final。
+    """
+    try:
+        try:
+            provider = current_provider()
+        except ASRError:
+            return
+        if provider is None:
+            return
+        streamer = seg.get("streamer")
+        if streamer is None:
+            return
+        pcm = streamer.snapshot_pcm()
+        timeout = max(PROBE_MIN_TIMEOUT_S,
+                      PROBE_TIMEOUT_FACTOR * len(pcm) / (4 * 16000))
+        try:
+            text = await asyncio.wait_for(
+                provider.transcribe(pcm, 16000, seg["path"]), timeout)
+        except (asyncio.TimeoutError, ASRError):
+            return
+        confirmed = streamer.on_hypothesis(text or "")
+        # 只在“仍是同一段打开着”时下行：段已结束（final 已发）后的迟到探测
+        # 若再吐 partial，会让同一 segment_id 先 final 后 partial —— 禁止。
+        if (confirmed and confirmed != seg.get("last_partial")
+                and conn.open_seg is seg):
+            seg["last_partial"] = confirmed
+            conn.counters["partials_sent"] += 1
+            await _send(conn, {"type": "asr_partial", "segment_id": seg["id"],
+                               "text": confirmed, "path": seg["path"],
+                               "ts_ms": seg["ts_start"]})
+    except (_ConnDead, asyncio.CancelledError):
+        raise
+    except Exception as e:
+        import logging as _logging
+
+        # R14：只记异常种类名，无音频、无文本、无路径。
+        _logging.getLogger(__name__).warning("partial probe dropped (%s)",
+                                             type(e).__name__)
+    finally:
+        conn.probe_in_flight -= 1
+
+
 async def _on_audio(conn: _Conn, ts_ms: int, payload: bytes) -> None:
     if len(payload) != AUDIO_PAYLOAD_BYTES:
         conn.counters["malformed"] += 1
@@ -259,6 +350,15 @@ async def _on_audio(conn: _Conn, ts_ms: int, payload: bytes) -> None:
             await _send(conn, {"type": "asr_error", "segment_id": seg["id"],
                                "error": "segment_truncated", "path": seg["path"],
                                "ts_ms": seg["ts_start"]})
+    # task18：关闭时 streamer 为 None，只多一次 `is None` 判断即返回 ——
+    # 此分支之外本函数与 task15 逐字一致（回归单测锁定）。
+    streamer = seg.get("streamer")
+    if streamer is not None and streamer.on_frame(payload) == "probe":
+        if conn.probe_in_flight <= 0:
+            conn.probe_in_flight += 1
+            conn.counters["partial_probes"] += 1
+            asyncio.create_task(_probe(conn, seg))
+        # 在途已有探测时跳过本轮节拍：探测是 best-effort，不排队。
 
 
 async def _on_event(conn: _Conn, obj: dict) -> None:
@@ -294,7 +394,11 @@ async def _on_event(conn: _Conn, obj: dict) -> None:
         seg_id = f"seg_{conn.seg_counter}"
         conn.open_seg = {"id": seg_id, "path": path, "ts_start": ts_ms,
                          "ts_end": ts_ms, "buf": deque(),
-                         "dropped_oldest": 0, "truncated_notified": False}
+                         "dropped_oldest": 0, "truncated_notified": False,
+                         # task18：段级快照 —— 开启才挂探测器（下一段重新快照）；
+                         # last_partial 防同一确认文本重复下行。
+                         "streamer": SegmentStreamer() if _latency_enabled() else None,
+                         "last_partial": ""}
         await _send(conn, {"type": "asr_start", "segment_id": seg_id,
                            "path": path, "ts_ms": ts_ms})
         return

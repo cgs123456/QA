@@ -241,7 +241,7 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- Phase 1b 进行中：R9–R14 已接受；1b-1（Python WS 音频协议）已提交（`c08ab44`）。
+- Phase 1b 收尾中：R9–R14 已接受；1b-1（Python WS 音频协议）已提交（`c08ab44`）。
   1b-3（Rust 双路采集到"可发送帧"）已提交（`c527511`）：`src-tauri/src/audio/` 八个模块
   （`frame` / `loopback` / `resample` / `cpal_common` / `cpal_mic` / `cpal_monitor` /
   `wasapi_loopback` / `mod`）——Windows loopback + 全平台 mic + Linux monitor 三路
@@ -259,14 +259,23 @@
   **task-16 已完成（未提交）**：触发策略（`src/lib/trigger.ts`，纯函数 + 时间注入）
   + 实时提词会话（`src/lib/liveqa.ts`）+ 接线与 UI（`useLiveQA` / `Teleprompter` / `LiveQA` 页）
   + F1.6 全局快捷键（`tauri-plugin-global-shortcut` + `src-tauri/src/shortcuts.rs`）（详见上节）。
-  全量：`cargo test --lib` **74 passed**（+7 = shortcuts 新单测）、`clippy -D warnings` 零告警、
-  `cargo check --all-targets` 零错误；`vitest` **89 passed**、`tsc` 0、`eslint` 0、`vite build` 成功；
-  `pytest` **150 passed / 0 failed**（本轮未动 sidecar，沿用 task-15 结果）。
-  **环境修正（重要，推翻此前记录）**：Rust 工具链**本机可用**，只是不在 git-bash 的 PATH 上 ——
-  `C:/Users/Administrator/.cargo/bin/{cargo,rustc,rustfmt,clippy-driver}.exe`，rustc 1.98.1，
-  配 MSVC 2022。故「本机无 Rust 工具链」的旧结论作废，Rust 侧改动**可以**本地编译验证
-  （本轮 task-16 已实测：`cargo check` / `cargo test` / `cargo clippy` 全绿）。
-  用法：`export PATH="/c/Users/Administrator/.cargo/bin:$PATH"`。
+  **task-17～20（含 M2 验收）已做完本机可做部分**：三 Provider 可切换 + 流式门控 +
+  回归 harness + `docs/acceptance-m2.md`（9 通过 / 2 有条件 / 1 阻塞 / 4 未达标，
+  `m2-audio-pipeline` tag 暂缓，清除表见报告 §4）；门槛1 paraformer 配置 PASS
+  （1147ms）/ faster-whisper 同机 FAIL（18.0s，高负载）；门槛2 双路 600s GATE2_PASS。
+  详见上节各条目。
+  全量（本盒子，2026-09-14 复核）：`cargo` 不可跑；`vitest`/`tsc` 不可跑（无 node_modules）；
+  `pytest` **137 passed**（16 error + 1 fail 全系缺 vendor 二进制，P0 纪律停等投喂）。
+  **环境修正（重要，推翻此前记录）**：此前“Rust 工具链本机可用
+  （`C:/Users/Administrator/.cargo/bin`）”是另一台机器的结论——**本盒子无 cargo、
+  无 git、PATH 缺 System32**（`where`/`tail` 不可用，`pip` 曾误指 hermes venv，
+  一律改用 `python -m pip`）。本盒子 Python 为 **3.12.10**（此前记“本机可用 3.13.14”
+  应为另一环境；PRD 要求 3.11，CI/打包时仍须按 3.11 锁定验证）。
+  本轮新装（PyPI 可达，GitHub/直连 HF 不通）：`sqlite_vec`、`numpy`、
+  `sherpa-onnx==1.13.8`（+core 同版本，与锁 pin 一致）、`faster-whisper==1.2.1`
+  栈（ctranslate2 4.8.2 / av 18.1.0，与锁一致）、`webrtcvad-wheels`、
+  `onnxruntime==1.30.0`（与锁一致）、`silero-vad`、`psutil`。
+  权重已落盘（SHA 全过）：`faster-whisper-base` 148MB / `paraformer-zh` 243MB。
   **既有债务（本轮发现，非本次引入）**：`cargo fmt --check` 在 4 个未触碰文件上失败
   （`security/keychain.rs:15`、`sidecar/degradation.rs:43`、`sidecar/manager.rs:26/293/305/372/473/495`）——
   说明此前「rustfmt clean」的记录与当前 rustfmt 版本不符。本轮只格式化了 `shortcuts.rs`，
@@ -278,10 +287,13 @@
   ③ 把 `Frame16k` 经 `encode_ws_frame` 推给 sidecar `/audio/stream` 的生产接线
      （目前 uplink 有完整单测与 e2e，但尚未接上采集管线）；
   ④ 采集服务落地后，F1.6 的 `capture://toggle` 才有真实消费方（task-16 已发事件、未接线）。
-  **三项需主人裁定/知会**：① task-16 的三处落地裁定（手动触发绕过去重 / 「无疑问词」= 全文不含 /
-  句尾 `?` 判定文本，详见上节）；② task-14 的 DoD 字面「错 token → 1008」与实测 403 的偏差
-  （详见上节，已记 api-contract）；③ `dist-sidecar/` 仍是 task-10 旧包，
-  重建被本机批量删除守卫拦住（详见 `docs/benchmark.md` 口径注记）。
+  **需主人裁定/知会（五项，原三项 + 本轮两项）**：① task-16 的三处落地裁定（手动触发绕过去重 /
+  「无疑问词」= 全文不含 / 句尾 `?` 判定文本，详见上节）；② task-14 的 DoD 字面
+  「错 token → 1008」与实测 403 的偏差（详见上节，已记 api-contract）；③ `dist-sidecar/`
+  仍是 task-10 旧包，重建被本机批量删除守卫拦住（详见 `docs/benchmark.md` 口径注记）；
+  ④ **中文默认 ASR 切 paraformer**（门槛1数据：同机 1.14s vs 18.0s；代价：非中文场景不可用，
+  需多语种 fallback；一行默认值改动，等明确指示）；⑤ **是否按当前范围打 `m2-audio-pipeline`**
+ （M1 §4 同款覆盖程序；缺件/R19/平台/vendor/前端目检六项清除表见 acceptance-m2.md §4）。
 
 ## 待人工验证
 - task-16 F1.6 快捷键真机（需 Tauri 壳 + 真实桌面，本机无壳）：
@@ -308,6 +320,18 @@
   与音频实际时长（±1 帧）。素材放 `sidecar/models/` 外，勿入库。
   复现入口：`python scripts/bench_asr_latency.py`（把合成音频换成真实 WAV 即可）。
 - task-15 双路并发时延：本轮为单路串行口径（loopback + mic 同时说话未测）。
+- task-19 收尾余量（**三项外部阻塞**，harness 就绪即等投喂，详见 `docs/audio-regression.md` §6）：
+  ① **用户录制 6 样本 + 标注**（指南见 `sidecar/tests/audio_samples/README.md`；
+  录完把 manifest 对应槽改 `ready` + 填 sha256，然后
+  `python scripts/audio_regression.py --asr faster-whisper --out docs/audio-regression.md`）；
+  ② R19 关闭三件套（嘈杂子集表1数字 + Rust 侧 webrtc 绝对值复核 + 按数据定默认）；
+  ③ 三平台真机（Windows 插拔重建/macOS/Linux 采集 + 双路 ts<50ms 实测贴回报告 §5）。
+- task-18 GPU 联调（**必做，需 CUDA 机器**，本机已决策跳过）：① `PUT /asr/latency
+  {enabled:true}` → 200（`cuda:true`）；② 说话 5s，记录首个 `asr_partial` 相对
+  `segment_start` 的时延（DoD 目标 ~1.5s）并落盘到 `docs/benchmark.md` 本节步骤；
+  ③ 核对同一 `segment_id` 的 `asr_final` 全文以全部 partial 为前缀（无撤回）；
+  ④ `PUT /asr/latency {enabled:false}` 后复跑 task-15 链路，确认与旧数字一致
+  （回归）；⑤ 标定 `SILENCE_RMS`/`SILENCE_WINDOW` 初值（合成信号有效，真机底噪未知）。
 - 1b-4 VAD 真实人声自测（**必做，合成样本不能替代**）：合成 speech-like 信号在四个 mode 下
   都是 100/100 voiced（见上节），饱和到区分不出档位，只能证明"非退化"。必须用真实人声：
   ① 录一段"说话—停顿—说话"的真实 16k 单声道素材（或直接用 1b-3 的 `record_loopback`
@@ -323,11 +347,14 @@
      `StreamRebuilt`，且 seq/ts 不重启（`set_input_rate` 只换 resampler）。
   ③ Linux monitor（PulseAudio）与 macOS mic-only 未在本机（Windows）验证，
      需对应平台各跑一次 `cargo test`。
-- Rust 工具链**本机可用**（见「当前」节环境修正）：`export PATH="/c/Users/Administrator/.cargo/bin:$PATH"`
-  后 `cargo check/test/clippy/fmt` 均可跑。`cargo test --lib` 现 **74 passed / 0 failed**、
-  `clippy -D warnings` 零告警。余项为**壳**验证（需 Tauri 壳/真实桌面，与工具链无关）：
+- Rust 工具链（见「当前」节环境修正：**本盒子无 cargo**，此前“本机可用”是另一机器的结论，
+  已推翻）：有工具链机器上 `cargo check/test/clippy/fmt` + `cargo test --lib` 补跑；
+  余项为**壳**验证（需 Tauri 壳/真实桌面，与工具链无关）：
   `$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志
   可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
+- vendor 二进制（本盒子 GitHub 不通取不到；有网机器）：按 `scripts/fetch-vendor.py`
+  头注释取 `libsimple-windows-x64.zip`（SHA `7f03cc28…bed0b`）落盘后，全量 pytest 复绿、
+  QA 链真机联测（门槛1固定答案端到端即从“合成总账”升级为真机实测）
 - task-2 人工 DoD（有工具链机器）：① 手动 kill sidecar 的 python 进程 → 日志可见 `restart 1/3 in 1s`… 最多 3 次并恢复 health（计数在 health 恢复后清零）；② 连续 kill 致 4 连败 → 前端降级页（reason=restart_exhausted）+ 事件 sidecar://degraded；③ 伪造 protocol_version（如改 main.py PROTOCOL_VERSION="9.9"）→ 降级页 reason=version_mismatch；④ 应用退出后 tasklist 无残留 python sidecar 进程
 - Python 为 3.13.14（本机可用版本），PRD 要求 3.11——后续 CI/打包时需按 3.11 锁定验证
 
@@ -456,8 +483,61 @@
   前端取消失效（signal 被自建 controller 覆盖，cancel 永不到达 + 误报超时，现透传 + 原样抛 AbortError，
   悬挂服务单测锁定）；pyproject 描述过期更新。
   接受项（有记录）：vec blanket 降级（缺模型为预期态，warnings 为观测通道）；FastAPI 0.141 路由表象。
-  债务：Rust 零编译验证 / Ollama e2e / 标定 / 前端止于逻辑层 / _embedder 单例无失效处理 /
-  进程内存语义（TASKS/_JOBS/secrets 重启即失，符合 TTL 语义）。
+   债务：Rust 零编译验证 / Ollama e2e / 标定 / 前端止于逻辑层 / _embedder 单例无失效处理 /
+   进程内存语义（TASKS/_JOBS/secrets 重启即失，符合 TTL 语义）。
+- task-17 多 ASR Provider 可切换（2026-09-14）：sidecar ASR 从单 faster-whisper
+  变为三本地 provider 可切换（+ 云端 REST 保留）。
+  **选型**：sherpa-onnx（ONNX，免 torch）同时支持 SenseVoice 与 Paraformer；
+  `sherpa-onnx` + `sherpa-onnx-core` 两 wheel 合计约 18 MiB，funasr 拖 PyTorch
+  ~2 GB —— 体积差两个数量级，否决（`sensevoice_provider.py` 头注释立档）。
+  **新增文件**：`asr/sherpa_base.py`（离线识别器共用基类：进程内单例/懒加载/
+  PCM 契约校验/CPU 卸载/错误映射；段输入统一 float32+16kHz 各自转换）；
+  `asr/sensevoice_provider.py`（REGISTRY_KEY `sense-voice`，输出清洗 + 标签快照）；
+  `asr/paraformer_provider.py`（REGISTRY_KEY `paraformer-zh`，同套清洗兜底）；
+  `asr/text_clean.py`（纯函数：结构标签/特殊符号/BPE/CJK 空格；只删标签不改内容）；
+  `asr/catalog.py`（目录 + `ASRSwitchboard` 引用切换 + 本地备选偏好序）；
+  `asr/runtime.py`（进程级单例，audio 与 settings 共享，避免 routers 互依赖）。
+  **切换语义**：`routers/audio.py` 每段读一次 `current_provider()` —— 切换对下一段
+  生效（引用替换原子）；`PUT /asr/provider` 未知名 → 400，构造失败（如云端缺 key）
+  → 409 且保持原选择（先构造成功才替换）。默认仍 faster-whisper（task15 行为不动）。
+  **权重**：registry 新增两条（`model.int8.onnx` SHA 取 HF LFS oid 并逐字节复核；
+  `tokens.txt` 首下实测 pin；ModelScope 无 ONNX 镜像故只列 hf-mirror → HF）；
+  sense-voice 约 228 MiB / paraformer-zh 约 232 MiB（见 `docs/models.md`）。
+  **前端 F6.2**：Settings 页 ASR 区（目录选择 + ready 态 + 按模型下载/进度轮询 +
+  切换即时生效提示；409 转“先保存 API Key”；旧 sidecar 404 转升级提示）。
+  **横向对比**（同样本 zh 5.59s / en 7.15s，见 `docs/benchmark.md`）：sensevoice
+  365ms（与上游官方 non-ITN 示例逐字一致）/ paraformer 315ms（中文最快，英文不可用）
+  / faster-whisper 1059ms 繁体；sherpa 两路约为其 1/3 时延。真 WER 无参考转写，
+  未宣称（挂起，需标注数据）。
+   数字：新增 `test_asr_text_clean.py` 14 条 + `test_sherpa_providers.py` 10 条
+   （替身识别器/registry 契约/切换板，零权重零第三方可跑）**24 passed**；
+   既有 `test_asr_switch.py` 8 条覆盖端点与不断连切换（4 条依赖 `api_client`
+   fixture 的因缺 vendor libsimple.dll 本机 error，见下；其余通过）。
+   **本机验证缺口（记账，2026-09-14 task20 复核更新）**：`sherpa-onnx==1.13.8`
+   已装（`import sherpa_onnx` 通过，与锁 pin 一致；`sherpa-onnx-core` 同为 1.13.8，
+   系 pip 依赖自动对齐——clean-venv freeze 仍待有网机器补正式记录）；
+   paraformer-zh 权重已真实下载（243MB，SHA 全过）并走通真实转写
+   （门槛1：3s 段 1147ms，见 task-20 条目）；`sqlite_vec` 已装，
+   但 `api_client` fixture 仍卡在缺 `sidecar/vendor/libsimple.dll`
+   （GitHub 不通取不到，P0 纪律停等投喂）；前端 `tsc/vitest/build`
+   因无 node_modules 未跑（无网 `pnpm install` 不可用）；真机三路出文本 +
+   断点续传复验待补（见「待人工验证」）。
+- task-18 流式部分结果（2026-09-14，GPU 验证决策跳过）：`asr/local_agreement.py`
+  （LocalAgreement 两次前缀一致才确认 + 已确认单调不撤回 + 滚动缓冲节拍帧计数派生
+  + 能量门静音暂停/即时恢复；whisper_streaming 仅算法参考，自行实现）；
+  `asr/runtime.py` 低延迟开关（默认关，开启要求 CUDA，否则 `unavailable`）；
+  `routers/audio.py` 段级快照挂 `SegmentStreamer`（partial 与 final 同 `segment_id`；
+  在途探测上限 1、忙则跳过；迟到探测丢弃；探测失败只记内容无关 warning，
+   不下行 error）；`GET/PUT /asr/latency` + Settings 页「低延迟模式」开关
+   （无 CUDA 时禁用 + 明示原因）。
+   **跳过依据（实测，非假设）**：本机无 `nvidia-smi`、torch CPU 版
+   `cuda.is_available()=False`、4 核 CPU —— DoD「GPU 首片段 ~1.5s 实测落盘」
+   无法执行，记入 `docs/benchmark.md` 决策记录；CPU 默认关闭是算力账
+   （base 整段 ~1.9s，流式每 1.5s 全量探一次反而更慢）。
+   数字：新增 `test_local_agreement.py` 13 条 + `test_low_latency.py` 10 条
+   （关闭回归零 partial/单次全量调用/同段 id/静音零探测/失败无 error/迟到丢弃）
+   **23 passed**（本机复跑通过）；WS 端到端（`api_client` fixture 系）与前端 `tsc`
+   本机不可跑（缺 vendor / node_modules，待有依赖机器补，鉴权覆盖表已同步新端点）。
 - task-12 抽检（2026-09-14，8 项）：① 全量复跑 pytest 108 + vitest 10 + Playwright 1 全绿
   （cargo 不可跑一贯记录；融合三案断言在仓）；② 评测集 20→59（+39 自然真题 tags=real，
   单测改计分结构不断言分数线以防自我交易），重跑基线 **Top-3=0.490（24/49），零答错**，
@@ -469,3 +549,43 @@
   （体积 200060425、启动 ~1.1ms 级、sqlite 3.53.1、simple v0.7.1 + 五步耗时）；
   ⑦ 降级链路维持待人工（需壳）；⑧ tag 不存在，维持暂缓（#6 未达标是主因）。
    verdict 变更同步回 `docs/acceptance-m1.md`（§6 抽检结论表 + #6 改判 + 基线快照更新）。
+- task-19 用数据收尾 1b（2026-09-14，样本/R19/三平台三项记挂起，harness 全落地）：
+  **样本骨架**：`sidecar/tests/audio_samples/`（README 录制指南 + `manifest.json`
+  6 槽全 `missing` + wav/标注 json gitignore 永不入库，录音只放本地）；
+  **runner** `scripts/audio_regression.py`（manifest 校验 + 参考端点 + 双 VAD 决策 +
+  WER + 真实 uvicorn/WS 延迟，`--out` 追加 dated run，`--self-test` 合成定标）；
+  **测量包** `sidecar/src/audio_eval/`（endpoint 参考实现/PROGRESS ① 参数逐字/
+  vad_providers 双适配器/metrics CER-WER-配对；webrtc 经 wheel、silero 经 PyPI 包
+  自带 ONNX + onnxruntime CPU，全部本机实跑通过）。
+  **VAD 裁决**：默认保持 webrtc-vad（aggr 2 不动），**R19 未关闭**——嘈杂子集真实
+  对比数据不存在，用合成数投票等于掷硬币（1b-4 饱和结论），关闭清单见
+  `docs/audio-regression.md` §3（样本 + 表1 + Rust 侧复核三项全空）。
+  **平台**：Windows 设备枚举实测（Conexant SmartAudio HD + NVIDIA 虚拟音频驱动，
+  无 GPU 与 task18 一致）；插拔重建/macOS/Linux/双路 ts 记程序 + 待认领
+  （无 cargo，本机不可构建 example；`docs/audio-regression.md` §5–§6）。
+  **诊断**：sidecar `GET /diagnostics/audio`（最近连接计数 + 限额，R14 内容无关，
+  `test_diagnostics.py` 3 绿，鉴权覆盖表已同步）+ Settings「音频诊断」面板
+  （设备/双路偏差行如实 pending，不编造）。
+  数字：新增 `test_audio_eval.py` 15 条 + `test_audio_eval_vad.py` 6 条 +
+  `test_diagnostics.py` 3 条，全绿；`--self-test` SELFTEST_PASS；
+  全量 pytest **137 passed**（16 error + 1 fail 全系本机缺 vendor 二进制，
+  P0 纪律停等投喂，与本轮无关）；前端 `tsc` 本机不可跑（无 node_modules）。
+  主报告：`docs/audio-regression.md` 落盘（三张实测表 PENDING + 方法冻结 + 裁决在案）。
+- task-20 M2 验收（2026-09-14，PRD 不在仓、§6.2 按 1b 任务史重建并标注）：
+  主报告 `docs/acceptance-m2.md` 落盘：9 通过 / 2 有条件通过 / 1 阻塞 / 4 未达标，
+  `m2-audio-pipeline` tag **暂缓**（M1 §4 同款程序：缺件/R19/平台/vendor/前端目检六项清除表在案）。
+  **门槛1**：权重两次真实下载（faster-whisper 148MB/188s，paraformer 243MB/354s，
+  SHA 全过）；同机高负载下（xray 140%+tun2proxy 90%，推理剩 ~1.5 核老 CPU）
+  faster-whisper 18.0s FAIL vs paraformer 1.14s 合成总账 1147ms PASS——
+  定档建议中文默认切 paraformer（未改，等指示）；生成答案无 Ollama 不可判。
+  脚本 `scripts/e2e_m2_gate1.py`（--provider 可复现）+ 证据 `.workbuddy-ai/gate1_result.json`。
+  **门槛2**：`scripts/e2e_m2_gate2_soak.py` 双路真实 WS 600s 各 100 段，
+  零丢段零污染（HashProvider 逐段核对）、RSS +3.6MB——GATE2_PASS（sidecar 范围，
+  Rust 采集侧待 §6 程序）。证据 `.workbuddy-ai/gate2_result.json`。
+- task-20 门槛数（2026-09-14，本盒子：Haswell 4 核高负载 + Python 3.12.10）：
+  门槛1（`scripts/e2e_m2_gate1.py`，3s 段 n=3，真实权重+uvicorn+WS）：
+  faster-whisper 冷加载 5543ms / 转写中位 17998.6ms（17368.4/18417.1）→ 合成总账 FAIL；
+  paraformer 冷加载 7186ms / 转写中位 1144.6ms（1131.2/1439.7）→ 合成总账 **1147ms PASS**。
+  门槛2（`scripts/e2e_m2_gate2_soak.py`，双路各 100 段/600s）：
+  ends==finals（100/100 双路）、hash 零失配、e2e 中位 ~6ms（HashProvider 下限口径）、
+  RSS 71.1MB → +3.6MB/604s（<50MB 线）。
