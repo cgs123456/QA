@@ -1,6 +1,11 @@
 # PROGRESS.md — InterviewCopilot
 
 ## 已完成
+- task-3 P0 冒烟 PASS（2026-09-14），P0 风险关闭（vendor 上游取数，SHA256 已验，五步全绿）
+- task-4 建库+打包（2026-09-14）：database/（connection 单连接/WAL/双扩展/绝对锚定BASE=env→_MEIPASS→sidecar；
+  schema user_version 迁移框架；v001 全量 DDL：stores/qa_pairs/fields/field_aliases+idx/ft_qa+ai/ad/au/vec_local512/vec_cloud3072/session_events）；
+  main.py 启动执行迁移（失败非零退出无握手）；build.py onedir + 三平台脚本 + verify-packaged.py 四校验；
+  产物 45.4MiB、System32 下启动两次 ALL PASS、spawn→health ~1.0-1.2s（<5s 预算）
 - task-1 骨架：monorepo（pnpm create tauri-app react-ts 模板，改名 interview-copilot；注：模板为 React 19，PRD 写 React 18.3+，按模板为准）+ PRD §4.1 目录占位 + .gitignore（排除 sidecar/vendor 二进制与 dict）+ scripts/fetch-vendor.py（来源/版本说明文档）
 - sidecar 最小 app：GET /health → {"status":"ok","version":"0.1.0"}；main.py：bind 127.0.0.1:0 取端口 → token_urlsafe(32)（本任务只生成不校验）→ uvicorn 绑定成功后再 print 握手 JSON（flush=True）；绑定失败非零退出
 - Rust：src-tauri/src/sidecar/{mod,protocol,manager,degradation}.rs；manager 经 INTERVIEWCOPILOT_PYTHON / INTERVIEWCOPILOT_SIDECAR_ENTRY 启动、逐行读 stdout、10s 超时、解析握手存 port/token；protocol 校验 protocol_version=="1.0" + 单测 3 例（合法/非法JSON/版本不匹配）；lib.rs 接线 setup 拉起 + get_sidecar_status；audio/security/commands/shortcuts/tray/updater 为空占位
@@ -8,8 +13,7 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- task-3 P0 冒烟 **PASS（2026-09-14），P0 关闭**：vendor 由我从上游取数落盘
-  （simple v0.7.1 windows-x64，SHA256 已验）；五步全绿，全量 pytest 11 passed。
+- task-4 已完工待提交；本机已跑验收（见实测数字档案）。
 
 ## 待人工验证
 - 需 Rust + MSVC Build Tools 机器：`cargo test`（protocol 3 例 + degradation 3 例 + manager 2 例）通过；`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
@@ -36,3 +40,9 @@
   jieba_query 首查 511.8ms / simple_query 热查 0.1ms；sqlite_version=3.53.1。
   全量 pytest：**11 passed**。报告见 `docs/compatibility.md`（PASS）。
   后续待办：sidecar 启动自检必须先验 dict 完整性（abort 不可捕获，重启循环救不了缺文件）。
+- task-4（2026-09-14）：迁移单测 8 例 + connection 锚定 6 例，全量 pytest **25 passed**；
+  dev 启动验证 user_version=1 + journal_mode=wal；打包实测见 `docs/benchmark.md`
+ （onedir 47,583,035 bytes=45.4MiB；spawn→握手 1.13s/1.01s，spawn→health 1.15s/1.03s；
+  System32 下四校验两次 ALL PASS）。实测修正两处：① BASE 开发态取 sidecar/（非项目根，
+  否则 vendor 路径错位，迁移单测已锁定）；② PyInstaller 6 不自动记入 sidecar/src 到 pathex，
+  build.py 显式 --paths 修复（漏收录则启动即 ModuleNotFoundError）。pyproject 新增 sqlite-vec>=0.1。

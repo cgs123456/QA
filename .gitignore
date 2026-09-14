@@ -47,3 +47,5 @@ sidecar/vendor/dict/*
 *.db-wal
 *.db-shm
 dist/
+build/
+*.spec

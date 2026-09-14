@@ -6,6 +6,8 @@ Contract (R2, R8):
   only (never logged/persisted), and enforced on every non-health route.
 - uvicorn must finish binding BEFORE the handshake is printed; bind
   failure exits non-zero without printing a handshake.
+- DB/extension init (vendor 自检 → 建连 → 迁移） happens BEFORE uvicorn;
+  any failure exits non-zero without printing a handshake.
 """
 
 import http.client
@@ -21,6 +23,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app import VERSION, app  # noqa: E402
 from core.auth import init_token  # noqa: E402
+from database.connection import (  # noqa: E402
+    check_vendor_files,
+    default_db_path,
+    get_connection,
+)
+from database.schema import run_migrations  # noqa: E402
 
 PROTOCOL_VERSION = "1.0"
 
@@ -54,10 +62,29 @@ def wait_for_health(port: int, timeout_s: float = 10.0) -> bool:
     return False
 
 
+def init_storage() -> None:
+    """vendor 自检 → 建连（WAL+双扩展+词典）→ 迁移。失败即致命错误。"""
+    missing = check_vendor_files()
+    if missing:
+        raise RuntimeError(
+            "vendor 缺失，拒绝启动："
+            + ", ".join(missing)
+            + "（缺 idf 时扩展会 abort 整个进程，绝不带病启动）"
+        )
+    conn = get_connection()
+    run_migrations(conn)
+
+
 def main() -> None:
     port = pick_port()
     auth_token = secrets.token_urlsafe(32)
     init_token(auth_token)  # enforce on all non-health routes (same process)
+
+    try:
+        init_storage()
+    except RuntimeError as e:
+        print(f"storage init failed: {e}", file=sys.stderr, flush=True)
+        sys.exit(1)
 
     import uvicorn
 
