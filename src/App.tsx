@@ -5,6 +5,7 @@ import "./App.css";
 import { SIDECAR_DEGRADED_EVENT } from "./lib/api";
 import { Degraded } from "./pages/Degraded";
 import { Knowledge } from "./pages/Knowledge";
+import { LiveQA } from "./pages/LiveQA";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 
@@ -19,7 +20,8 @@ type DegradedInfo = {
 };
 
 function App() {
-  const [tab, setTab] = useState<"search" | "knowledge" | "settings">("search");
+  // 默认停在「手动查找」：1a 的既有行为不动。实时提词是新增入口，不是新默认。
+  const [tab, setTab] = useState<"live" | "search" | "knowledge" | "settings">("search");
   const [status, setStatus] = useState<SidecarStatus | null>(null);
   const [degraded, setDegraded] = useState<DegradedInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +93,9 @@ function App() {
       </p>
       {error != null && <p data-testid="sidecar-error">{error}</p>}
       <nav className="row">
+        <button type="button" onClick={() => setTab("live")} disabled={tab === "live"}>
+          实时提词
+        </button>
         <button type="button" onClick={() => setTab("search")} disabled={tab === "search"}>
           手动查找
         </button>
@@ -109,7 +114,15 @@ function App() {
           设置
         </button>
       </nav>
-      {tab === "search" ? <Search /> : tab === "knowledge" ? <Knowledge /> : <Settings />}
+      {tab === "live" ? (
+        <LiveQA />
+      ) : tab === "search" ? (
+        <Search />
+      ) : tab === "knowledge" ? (
+        <Knowledge />
+      ) : (
+        <Settings />
+      )}
     </main>
   );
 }

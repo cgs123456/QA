@@ -95,6 +95,86 @@ button {
   margin-right: 5px;
 }
 
+/* ---- 实时提词（F1.5）---- */
+
+.teleprompter {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  text-align: left;
+}
+
+.teleprompter-empty {
+  color: #6b6b6b;
+}
+
+.teleprompter-card {
+  border: 1px solid #d8d8d8;
+  border-left: 4px solid #396cd8;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background-color: #ffffff;
+}
+
+.teleprompter-card--fail_closed {
+  border-left-color: #b08900;
+}
+
+.teleprompter-card--error {
+  border-left-color: #c0392b;
+}
+
+.teleprompter-question {
+  margin: 0 0 0.35rem;
+  font-size: 0.9rem;
+  color: #5a5a5a;
+}
+
+/* 答案要能「扫一眼就念出来」：这里的字号是功能性需求，不是装饰。 */
+.teleprompter-answer {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.teleprompter-answer--miss {
+  color: #8a6d00;
+}
+
+.teleprompter-meta {
+  margin: 0.5rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.teleprompter-tag {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background-color: #eaeefb;
+  color: #2f4b9b;
+}
+
+.teleprompter-tag--reused {
+  background-color: #eef2ef;
+  color: #3f6b4a;
+}
+
+.teleprompter-tag--error {
+  background-color: #fbeaea;
+  color: #a33128;
+}
+
+.live-transcript {
+  color: #6b6b6b;
+  font-style: italic;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -112,5 +192,22 @@ button {
   }
   button:active {
     background-color: #0f0f0f69;
+  }
+
+  .teleprompter-card {
+    background-color: #0f0f0f98;
+    border-color: #4a4a4a;
+  }
+  .teleprompter-question,
+  .teleprompter-empty,
+  .live-transcript {
+    color: #b9b9b9;
+  }
+  .teleprompter-tag {
+    background-color: #26304a;
+    color: #b9c8ff;
+  }
+  .teleprompter-answer--miss {
+    color: #e0c05a;
   }
 }

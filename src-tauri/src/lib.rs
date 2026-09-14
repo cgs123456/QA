@@ -18,12 +18,20 @@ use crate::commands::settings::save_api_key;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // F1.6 全局快捷键。处理器在插件构建时拿到绑定表，只发事件、不碰采集状态。
+        .plugin(shortcuts::plugin())
         .manage(SidecarState::default())
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 supervise(handle).await;
             });
+            // 注册失败不阻断启动：加速键可能被别的程序占用。
+            // 用 eprintln 而非日志插件：当前没有日志通道，且这是启动期一次性信息。
+            let failures = shortcuts::register_defaults(app.handle());
+            if !failures.is_empty() {
+                eprintln!("[shortcuts] failed to register: {}", failures.join(", "));
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

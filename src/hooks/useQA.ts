@@ -1,20 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiPost, sidecarFetch } from "../lib/api";
-import { parseSSEFrames } from "../lib/sse";
+import { askQuestion, type QAResult, type QASource } from "../lib/qa";
 
-export type QASource = {
-  type: string;
-  key: string;
-  score: number;
-  routes?: string[];
-  payload: Record<string, unknown>;
-};
-
-export type QAResult =
-  | { kind: "direct"; text: string; sources: QASource[]; llm_calls: number }
-  | { kind: "llm"; text: string; sources: QASource[]; llm_calls: number }
-  | { kind: "fail_closed"; text: string; sources: QASource[]; llm_calls: number }
-  | { kind: "error"; text: string; sources: QASource[]; llm_calls: number };
+// 类型从 lib/qa 透出：调用方（Search 等）沿用 `from "../hooks/useQA"` 的既有写法。
+export type { QAResult, QASource } from "../lib/qa";
 
 export type QAState = {
   phase: "idle" | "asking" | "streaming" | "done" | "error";
@@ -53,55 +41,30 @@ export function useQA() {
       abortRef.current = controller;
       setState({ ...INITIAL, phase: "asking" });
       try {
-        const { task_id } = await apiPost<{ task_id: string }>("/qa/ask", {
-          question,
-          ...(storeId != null ? { store_id: storeId } : {}),
-          ...(provider != null ? { provider } : {}),
-        });
-        setState((s) => ({ ...s, phase: "streaming" }));
-        const res = await sidecarFetch(
-          `/qa/stream?task_id=${encodeURIComponent(task_id)}`,
-          { signal: controller.signal },
-          120000,
-        );
-        if (!res.ok || res.body == null) {
-          throw new Error(`stream HTTP ${res.status}`);
-        }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let text = "";
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const parsed = parseSSEFrames(buffer);
-          buffer = parsed.rest;
-          for (const raw of parsed.events) {
-            const event = raw as Record<string, unknown>;
-            if (event["type"] === "retrieval") {
+        const result = await askQuestion(question, {
+          storeId,
+          provider,
+          signal: controller.signal,
+          onEvent: (event) => {
+            if (event.type === "retrieval") {
               setState((s) => ({
                 ...s,
-                action: event["action"] as string,
-                sources: (event["sources"] as QASource[]) ?? [],
+                phase: "streaming",
+                action: event.action,
+                sources: event.sources,
               }));
-            } else if (event["type"] === "generation") {
-              const chunk = event["chunk"] as string;
-              text += chunk;
-              setState((s) => ({ ...s, text }));
-            } else if (event["type"] === "done") {
-              const result = event["result"] as QAResult;
-              setState((s) => ({
-                ...s,
-                phase: "done",
-                text: result.text,
-                result,
-                sources: result.sources,
-              }));
+            } else if (event.type === "generation") {
+              setState((s) => ({ ...s, phase: "streaming", text: s.text + event.chunk }));
             }
-          }
-        }
-        setState((s) => (s.phase === "streaming" ? { ...s, phase: "done" } : s));
+          },
+        });
+        setState((s) => ({
+          ...s,
+          phase: "done",
+          text: result.text,
+          result,
+          sources: result.sources,
+        }));
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") return;
         setState((s) => ({

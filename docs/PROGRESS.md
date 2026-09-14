@@ -1,6 +1,41 @@
 # PROGRESS.md — InterviewCopilot
 
 ## 已完成
+- task-16 1b 产品面：什么时候响、响什么（2026-09-14）：触发策略 + 实时提词器 + F1.6 全局快捷键。
+  **触发策略（纯函数，可脱离运行时单测）**：新增 `src/lib/trigger.ts` ——
+  `questionVerdict`（PRD 规则表**按序短路**）、`DedupWindow`（3-gram Jaccard ≥0.85 / 窗口 60s / N=10）、
+  `RefreshThrottle`（3s 锁、单槽队列、到期取**最后一条**、手动打断）。
+  时间全部由调用方注入（模块内不读 `Date.now()`），否则「3 秒锁」「60 秒窗」只能靠 sleep 测，
+  既慢又不稳；`RefreshThrottle` 用单槽覆盖而非真队列 —— 与「取队尾」等价但内存有界。
+  **实时提词会话**：新增 `src/lib/liveqa.ts` —— 把判定/去重/锁定与**检索结果**缝成状态机
+  （`ingestFinal` / `manual` / `drain` / `settle`），会话是 `cards` 的唯一所有者；
+  另含平台矩阵（`detectPlatform` / `capturePaths` / `captureNotice`）。
+  **接线**：`src/hooks/useLiveQA.ts`（订阅 `asr://final` + `teleprompter://trigger` + `capture://toggle`，
+  250ms 轮询 drain；新检索取消上一次未完成的检索 ——「最新问题优先」与锁定期「取最后一条」同向）；
+  `src/components/Teleprompter.tsx`（最近 3 条、最新在最上、来源标签、Fail-Closed 显示「知识库未命中」）；
+  `src/pages/LiveQA.tsx` + App 新增「实时提词」页签（默认页签仍是「手动查找」，1a 行为不动）。
+  **F1.6 全局快捷键**：`tauri-plugin-global-shortcut` + `src-tauri/src/shortcuts.rs`
+  （`CmdOrCtrl+Shift+R` 采集开关 / `CmdOrCtrl+Shift+Space` 手动提词）；
+  处理器按 `Shortcut` **相等性**派发而非字符串比对 —— `Shortcut` 的 `Display` 输出规范化形式
+  （`Ctrl+Shift+R`），与 `DEFAULT_BINDINGS` 写的 `CmdOrCtrl+Shift+R` 字面不同，字符串比对会**静默失配**；
+  注册失败不阻断启动（加速键可能被别的程序占用），返回失败清单由调用方记录。
+  **重构**：`useQA` 的两段式 SSE 消费抽到 `src/lib/qa.ts::askQuestion`，1a 与 1b 共用一条协议路径
+  （复制一份就等于给协议变更留两个改点，而这类副本通常有一份先腐坏）。
+  全量：`vitest` **89 passed**（新增 trigger 50 + liveqa 29）、`tsc --noEmit` 0、`eslint` 0、`vite build` 成功。
+  **三处落地裁定（需主人确认）**：
+  ① **手动触发绕过去重**（`manualBypassesDedup` 默认 `true`）：PRD 去重小节只说「同一 session 内……复用上次结果」，
+     未按触发来源区分；但手动触发是用户显式的「现在给我答案」，复用缓存会让按键看起来失灵 ——
+     而用户按它，往往正是因为上一条答案不满足预期。代价是可能重复一次检索（~5–100ms）。
+  ② **「无疑问词」= 全文不含疑问词**，而非「开头不是疑问词」：否则「我该怎么办」以「我」开头会被判陈述句跳过 ——
+     那恰恰是最该检索的一类问题。
+  ③ **句尾 `?` 在轻度归一化文本上判定**：PRD 先要求「归一化（去标点）」再要求「末尾含 `?`」，两条自相矛盾；
+     实现取「中文语气词在归一化文本上判、`?` 在保留标点的文本上判」，两边都不丢信号。
+  **行为变更（记档）**：SSE 流结束却未收到 `done` 事件时现在**抛错**（此前静默当成成功，UI 停在占位文案）。
+  理由：按契约 sidecar 总会发 `done`，缺它就是传输被截断；截断的答案看起来像完整答案，
+  对提词场景尤其危险（用户会把半句话念出去）。
+  **裁剪（记档）**：采集服务（`endpoint.rs` 段端点状态机 + 采集生命周期）尚未落地，
+  故 F1.6 的「开始/停止采集」当前只发 `capture://toggle` 事件、前端显示「采集服务尚未接线」。
+  快捷键层不因此改动：它只做「键盘 → 事件」，不拥有采集状态。
 - task-15 段→文本→下行 + Provider 失败自动切换（2026-09-14）：sidecar ASR 从「抽象 + 替身」
   变为「真 provider + 降级链」。
   **新增文件**：`asr/faster_whisper_provider.py`（本地 base/int8/CPU，整段转写、语言自动，
@@ -218,22 +253,53 @@
   **task-14 已提交（`fbe6f24`）**：WS 全链路（Rust `uplink.rs` + sidecar 段缓冲 R13 改造
   + 真实 uvicorn 跨语言 e2e），并查出「依赖缺 WS 实现 → /audio/stream 全 404」与
   「鉴权失败线上是 403 而非 1008」两个既有问题（详见上节）。
-  **task-15 已完成（未提交）**：ASR 真 provider（faster-whisper base/int8/CPU，
+  **task-15 已提交（`596e348`）**：ASR 真 provider（faster-whisper base/int8/CPU，
   进程内单例）+ 四级降级链 + 下行 `provider`/`degraded` 扩充 + 权重 registry 条目
   + 打包 collect + 时延实测（详见上节与 `docs/benchmark.md`）。
-  全量：`cargo test` **71**（lib 67 + 集成 1 + 跨语言 e2e 3）+ clippy 零告警 + rustfmt clean；
-  `pytest` **150 passed / 0 failed**。
+  **task-16 已完成（未提交）**：触发策略（`src/lib/trigger.ts`，纯函数 + 时间注入）
+  + 实时提词会话（`src/lib/liveqa.ts`）+ 接线与 UI（`useLiveQA` / `Teleprompter` / `LiveQA` 页）
+  + F1.6 全局快捷键（`tauri-plugin-global-shortcut` + `src-tauri/src/shortcuts.rs`）（详见上节）。
+  全量：`cargo test --lib` **74 passed**（+7 = shortcuts 新单测）、`clippy -D warnings` 零告警、
+  `cargo check --all-targets` 零错误；`vitest` **89 passed**、`tsc` 0、`eslint` 0、`vite build` 成功；
+  `pytest` **150 passed / 0 failed**（本轮未动 sidecar，沿用 task-15 结果）。
+  **环境修正（重要，推翻此前记录）**：Rust 工具链**本机可用**，只是不在 git-bash 的 PATH 上 ——
+  `C:/Users/Administrator/.cargo/bin/{cargo,rustc,rustfmt,clippy-driver}.exe`，rustc 1.98.1，
+  配 MSVC 2022。故「本机无 Rust 工具链」的旧结论作废，Rust 侧改动**可以**本地编译验证
+  （本轮 task-16 已实测：`cargo check` / `cargo test` / `cargo clippy` 全绿）。
+  用法：`export PATH="/c/Users/Administrator/.cargo/bin:$PATH"`。
+  **既有债务（本轮发现，非本次引入）**：`cargo fmt --check` 在 4 个未触碰文件上失败
+  （`security/keychain.rs:15`、`sidecar/degradation.rs:43`、`sidecar/manager.rs:26/293/305/372/473/495`）——
+  说明此前「rustfmt clean」的记录与当前 rustfmt 版本不符。本轮只格式化了 `shortcuts.rs`，
+  未跨文件重排（避免制造无关 diff）；是否全仓 `cargo fmt` 待主人裁定。
   **下一项（等主人派单，按既定节奏逐步汇报）**：
   ① `endpoint.rs` 端点状态机（起始=最近 5 帧中 3 帧 voiced；结束=连续 ~500ms 静音 hangover；
      最短段 250ms 丢弃；最长段 15s 强制切段；`vad_state` 心跳每 1s）——**仍未开始**；
   ② 双路独立 VAD + 事件合并进统一 WS 上行队列（DoD：合成样本边界误差 <1 帧、双路互不干扰）；
   ③ 把 `Frame16k` 经 `encode_ws_frame` 推给 sidecar `/audio/stream` 的生产接线
-     （目前 uplink 有完整单测与 e2e，但尚未接上采集管线）。
-  **两项需主人裁定/知会**：① task-14 的 DoD 字面「错 token → 1008」与实测 403 的偏差
-  （详见上节，已记 api-contract）；② `dist-sidecar/` 仍是 task-10 旧包，
+     （目前 uplink 有完整单测与 e2e，但尚未接上采集管线）；
+  ④ 采集服务落地后，F1.6 的 `capture://toggle` 才有真实消费方（task-16 已发事件、未接线）。
+  **三项需主人裁定/知会**：① task-16 的三处落地裁定（手动触发绕过去重 / 「无疑问词」= 全文不含 /
+  句尾 `?` 判定文本，详见上节）；② task-14 的 DoD 字面「错 token → 1008」与实测 403 的偏差
+  （详见上节，已记 api-contract）；③ `dist-sidecar/` 仍是 task-10 旧包，
   重建被本机批量删除守卫拦住（详见 `docs/benchmark.md` 口径注记）。
 
 ## 待人工验证
+- task-16 F1.6 快捷键真机（需 Tauri 壳 + 真实桌面，本机无壳）：
+  ① `pnpm tauri dev` 后按 `CmdOrCtrl+Shift+Space` → 前端「实时提词」页应触发一次检索
+     （需先有转写文本，否则 `manual()` 返回 null、无动作 —— 这是设计行为）；
+  ② 按 `CmdOrCtrl+Shift+R` → 页面出现「已收到采集开关（F1.6）。采集服务尚未接线」提示；
+  ③ 先占用 `Ctrl+Shift+R`（如另开一个注册同键的程序）再启动 → 应用**仍应正常启动**，
+     stderr 可见 `[shortcuts] failed to register: ToggleCapture: ...`；
+  ④ macOS 机器：页首应显示「采集路径：麦克风（仅麦克风（macOS 无系统回环采集））」，
+     且不应出现「系统回环」。Linux：应显示「系统回环 + 麦克风」（PulseAudio monitor）。
+- task-16 DoD 真机（**必做，需真实转写文本**）：① 说「发货周期是多久」→ 答案卡应在 ≤4s 内出现
+  （固定答案路径，1a 实测 ask→done 2.4ms，预算几乎全给 ASR）；② 连说两句相似问题
+  → 第二句卡片带「复用」标签且**不重新检索**（网络面板应只见一次 `/qa/ask`）。
+  前置：采集服务未接线，本轮只能用合成 `asr_final` 事件或后续 `endpoint.rs` 落地后补测。
+- task-16 标定（阻塞于评测集）：PRD 明示去重阈值 0.85 / 锁定期 3s / 去重窗口 60s 为**初值**，
+  需 100 题评测集标定后写回。已记录的已知代价：3-gram Jaccard 对中文容错很窄 ——
+  「发货周期是多久」vs「发货周期是多久呢」= 5/6 ≈ 0.833 < 0.85，ASR 多吐一个语气词即漏去重。
+  代价不对称（漏去重多检索一次；误去重则把上一题答案冒充本题答案），故保留严格侧。
 - task-15 ASR 识别质量（**必做，合成样本不能替代**）：本轮只测了**时延**，
   音频是合成信号（谐波堆 + 音节包络），足以驱动真实算力路径但**文本无意义**。
   需真实中文录音：① 录一段中文（含专有名词/中英混说更好），走完整链路
@@ -257,8 +323,10 @@
      `StreamRebuilt`，且 seq/ts 不重启（`set_input_rate` 只换 resampler）。
   ③ Linux monitor（PulseAudio）与 macOS mic-only 未在本机（Windows）验证，
      需对应平台各跑一次 `cargo test`。
-- 需 Rust + MSVC Build Tools 机器：`cargo test` 现本机可跑且全绿（35+1，见下），
-  余项为壳验证：`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志
+- Rust 工具链**本机可用**（见「当前」节环境修正）：`export PATH="/c/Users/Administrator/.cargo/bin:$PATH"`
+  后 `cargo check/test/clippy/fmt` 均可跑。`cargo test --lib` 现 **74 passed / 0 failed**、
+  `clippy -D warnings` 零告警。余项为**壳**验证（需 Tauri 壳/真实桌面，与工具链无关）：
+  `$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志
   可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
 - task-2 人工 DoD（有工具链机器）：① 手动 kill sidecar 的 python 进程 → 日志可见 `restart 1/3 in 1s`… 最多 3 次并恢复 health（计数在 health 恢复后清零）；② 连续 kill 致 4 连败 → 前端降级页（reason=restart_exhausted）+ 事件 sidecar://degraded；③ 伪造 protocol_version（如改 main.py PROTOCOL_VERSION="9.9"）→ 降级页 reason=version_mismatch；④ 应用退出后 tasklist 无残留 python sidecar 进程
 - Python 为 3.13.14（本机可用版本），PRD 要求 3.11——后续 CI/打包时需按 3.11 锁定验证

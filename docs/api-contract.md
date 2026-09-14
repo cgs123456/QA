@@ -112,3 +112,27 @@ Rust 生产端（1b-3 落地）：`audio::frame::encode_ws_frame(seq, ts_ms, &pc
   单段缓冲 ≤32MB（超则自动封段转写部分）；接收循环永不 await 转写
   （fire-and-forget + 完成计数）；下行发送串行锁 + 5s 超时，超时/断开即清理。
 - content-free：音频模块零打印；转写文本只进下行 JSON（单测以 capsys 锁定）。
+
+## Tauri 事件面（Rust → 前端，task-16）
+
+下行 JSON 由 Rust `audio/uplink.rs::TauriSink` **原样**转发到 Tauri 事件总线，
+事件名由 `tauri_event_name()` 映射（kind → `asr://*`）。前端只订阅事件名，不解析 WS。
+
+| 事件名 | 载荷 | 产生处 | 说明 |
+|---|---|---|---|
+| `asr://start` | 下行 `asr_start` JSON 原样 | `uplink.rs` | 语义见上（segment_start） |
+| `asr://partial` | 下行 `asr_partial` JSON | `uplink.rs` | 本阶段 sidecar 不发（整段转写） |
+| `asr://final` | 下行 `asr_final` JSON（含 `text`/`path`/`ts_ms`/`duration_ms`/`provider`/`degraded?`） | `uplink.rs` | 提词触发入口 |
+| `asr://error` | 下行 `asr_error` JSON | `uplink.rs` | |
+| `teleprompter://trigger` | 空（`null`） | `shortcuts.rs` | F1.6 手动提词；前端取最近一段转写，**打断 3s 锁定期** |
+| `capture://toggle` | 空（`null`） | `shortcuts.rs` | F1.6 采集开关；**采集服务未接线**，前端仅显示提示 |
+
+**契约要点**：
+
+- `asr://final` 的载荷含转写正文，属 UI 专用：**不得落日志**（R14）。
+- 快捷键事件只带 `null` 载荷，不带任何上下文 —— 「最近一段转写」由前端的状态机持有。
+  理由：Rust 侧不保存转写文本，就不存在「文本被日志/崩溃转储带出」的路径。
+- 快捷键绑定：`CmdOrCtrl+Shift+R`（采集开关）、`CmdOrCtrl+Shift+Space`（手动提词）。
+  注册失败（被其它程序占用）**不阻断启动**，仅在 stderr 记录失败清单。
+- 采集路径矩阵（与 `audio/mod.rs` 头注释一致）：Windows = 系统回环 + 麦克风；
+  Linux = 监听 + 麦克风；macOS = **仅麦克风**（UI 必须明示，`captureNotice()`）。
