@@ -26,6 +26,8 @@ NO_AUTH_CASES = [
     ("GET", "/qa/stream?task_id=x", None),
     ("POST", "/model/download", {}),
     ("GET", "/model/download/x", None),
+    ("GET", "/asr/providers", None),
+    ("PUT", "/asr/provider", {}),
 ]
 
 

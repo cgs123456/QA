@@ -11,10 +11,22 @@ faster-whisper-base（CTranslate2 int8，Systran 转换，ASR）：
 - config.json / tokenizer.json / vocabulary.txt 为非 LFS 小文件，上游无 SHA；
   值为 2026-09-14 首下实测 pin（尺寸 + 内容合法性均已核）。
 - 三源实测均可达，同样按 ModelScope → hf-mirror → HF 列出。
+
+sense-voice / paraformer-zh（sherpa-onnx ONNX int8，ASR，task17）：
+- 两者的 `model.int8.onnx` sha256 均取自 HF LFS oid（权威），已实测下载后逐字节复核通过。
+- `tokens.txt` 为非 LFS 小文件，上游无 SHA；值为 2026-09-14 首下实测 pin。
+- **ModelScope 无对应镜像**（实测 `modelscope.cn/api/v1/models/csukuangfj/...` → 404；
+  ModelScope 上的 `iic/SenseVoiceSmall`、`iic/speech_paraformer-...-pytorch` 是 PyTorch/funasr
+  格式，与 ONNX 权重不通用）。按既有纪律「缺失的镜像不列入、不调序」，
+  故这两条只列 hf-mirror → HF。
+- 另注：本机 `huggingface.co` 直连不通（curl 000），hf-mirror 是唯一实测可用源；
+  HF 条目保留是为了镜像顺序契约完整，不代表本机可用。
 """
 
 BGE_SMALL_ZH = "bge-small-zh-v1.5"
 FASTER_WHISPER_BASE = "faster-whisper-base"
+SENSE_VOICE = "sense-voice"
+PARAFORMER_ZH = "paraformer-zh"
 
 _MS = "https://modelscope.cn/models/onnx-community/bge-small-zh-v1.5-ONNX/resolve/master"
 _HFM = "https://hf-mirror.com/onnx-community/bge-small-zh-v1.5-ONNX/resolve/main"
@@ -36,6 +48,16 @@ _FW_HF = f"https://huggingface.co/{_FW_REPO}/resolve/main"
 
 def _fw_urls(remote: str) -> list:
     return [f"{_FW_MS}/{remote}", f"{_FW_HFM}/{remote}", f"{_FW_HF}/{remote}"]
+
+
+# sherpa-onnx 系列（task17）：ModelScope 无镜像，故只列 hf-mirror → HF。
+_SV_REPO = "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+_PF_REPO = "csukuangfj/sherpa-onnx-paraformer-zh-2023-09-14"
+
+
+def _sherpa_urls(repo: str, remote: str) -> list:
+    return [f"https://hf-mirror.com/{repo}/resolve/main/{remote}",
+            f"https://huggingface.co/{repo}/resolve/main/{remote}"]
 
 
 MODEL_REGISTRY = {
@@ -104,6 +126,48 @@ MODEL_REGISTRY = {
                 # 非 LFS：2026-09-14 首下实测 pin（尺寸 459861）。
                 "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
                 "urls": _fw_urls("vocabulary.txt"),
+            },
+        },
+    },
+    SENSE_VOICE: {
+        "display": "SenseVoiceSmall (sherpa-onnx ONNX int8, 中英日韩粤)",
+        "base_model": "FunAudioLLM/SenseVoiceSmall",
+        "files": {
+            "model.int8.onnx": {
+                "remote": "model.int8.onnx",
+                "size": 239233841,
+                # HF LFS oid（权威）；2026-09-14 实测下载后逐字节复核通过。
+                "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51",
+                "urls": _sherpa_urls(_SV_REPO, "model.int8.onnx"),
+            },
+            "tokens.txt": {
+                "remote": "tokens.txt",
+                "size": 315894,
+                # 非 LFS、无上游 SHA：2026-09-14 经 hf-mirror 首下实测 pin
+                #（尺寸 315894 + 内容为 `<unk> 0` 起首的 token 表）。
+                "sha256": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc",
+                "urls": _sherpa_urls(_SV_REPO, "tokens.txt"),
+            },
+        },
+    },
+    PARAFORMER_ZH: {
+        "display": "Paraformer-zh (sherpa-onnx ONNX int8, 中文)",
+        "base_model": "damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404",
+        "files": {
+            "model.int8.onnx": {
+                "remote": "model.int8.onnx",
+                "size": 243371218,
+                # HF LFS oid（权威）；2026-09-14 实测下载后逐字节复核通过。
+                "sha256": "f36a0433bcf096bd6d6f11b80a3ac8bed110bdca632fe0d731df8d1a84475945",
+                "urls": _sherpa_urls(_PF_REPO, "model.int8.onnx"),
+            },
+            "tokens.txt": {
+                "remote": "tokens.txt",
+                "size": 75756,
+                # 非 LFS、无上游 SHA：2026-09-14 经 hf-mirror 首下实测 pin
+                #（尺寸 75756 + 内容为 `<blank> 0` 起首的 token 表）。
+                "sha256": "59aba8873a2ed1e122c25fee421e25f283b63290efbde85c1f01a853d83cb6e6",
+                "urls": _sherpa_urls(_PF_REPO, "tokens.txt"),
             },
         },
     },

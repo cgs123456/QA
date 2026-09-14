@@ -33,6 +33,12 @@ task-14 明确要求「有界队列，满则丢最旧 + 告警（R13）」，故
 代价：触顶时段首部音频被丢弃（计数 + 告警可观测）。
 
 鉴权（R9）：Authorization Header，缺失/错误 → close code=1008（accept 之前）。
+
+**task17 provider 切换（记录）**：本模块不再直接持有 provider，改由
+`current_provider()` 每段解析一次 —— 先看 `set_asr_provider()` 的测试覆盖，
+否则读 `asr.runtime` 的进程级切换板（`ASRSwitchboard`）。效果：
+设置页切换对**下一段**生效，无需重启；在途段仍用旧引用（引用替换原子）。
+切换板构造失败（如切到云端但缺 key）→ 本段 `asr_error`，种类名即 `ASRError.kind`。
 """
 
 import asyncio
@@ -71,9 +77,31 @@ _LAST_COUNTERS: dict | None = None
 
 
 def set_asr_provider(provider) -> None:
-    """注入 ASR provider（测试/1b-2 接线用）。"""
+    """**覆盖**当前 ASR provider（测试注入用）。
+
+    覆盖优先级高于 `asr.runtime` 的切换板：设了它，`current_provider()`
+    一律返回它。既有测试因此不受 task17 引入切换板的影响。
+    传 `None` 即撤销覆盖，回到切换板。
+    """
     global _PROVIDER
     _PROVIDER = provider
+
+
+def current_provider():
+    """本段要用的 provider。
+
+    task17：默认走进程级切换板（F6.2「切换无需重启」），每段读一次 ——
+    切换对**下一段**生效；正在转写的那一段持有的是它开始时拿到的引用
+    （Python 的引用替换是原子的，不会读到半成品）。
+
+    构造失败（例如切到云端但未填 key）抛 `ASRError`，由调用方转为
+    `asr_error`，不穿透成连接级异常。
+    """
+    if _PROVIDER is not None:
+        return _PROVIDER
+    from asr.runtime import current_provider as _from_switchboard
+
+    return _from_switchboard()
 
 
 def last_counters() -> dict | None:
@@ -134,7 +162,14 @@ def _check_auth(websocket: WebSocket) -> bool:
 
 
 async def _ship(conn: _Conn, seg: dict) -> None:
-    provider = _PROVIDER
+    try:
+        provider = current_provider()
+    except ASRError as e:
+        # 切换板构造失败（如切到云端但缺 key）：只下行种类名（R14）。
+        await _send(conn, {"type": "asr_error", "segment_id": seg["id"],
+                           "error": e.kind, "path": seg["path"],
+                           "ts_ms": seg["ts_start"]})
+        return
     if provider is None:
         await _send(conn, {"type": "asr_error", "segment_id": seg["id"],
                            "error": "no_provider", "path": seg["path"],
