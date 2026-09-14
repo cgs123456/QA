@@ -1,6 +1,13 @@
 # PROGRESS.md — InterviewCopilot
 
 ## 已完成
+- task-5 文本闭环（2026-09-14）：parsers（markdown H1→entity/H2疑问→QA/陈述→字段首段/Q&A块；json 实体/qa_pairs/列表三形）+
+  validator（必填/usage集合/批内去重）+ field_vocab.json（3 组）/extractor（归一化+别名展开表）+
+  stores.py（CRUD/单选current/级联删vec手工清）+ compiler（单短事务写qa+fields+aliases，embeddings 参数预留 R6 位，
+  冲突覆盖记 field_overwritten/vocab_miss content-free 事件）+ retrieval（field_lookup 归一化精确 s=1.0；
+  fts5 双路 bm25<-0.5 top5 s=a/(a+0.5)，rejected 全过滤）+ routers（compile/list/store CRUD/current/search）+
+  eval 骨架（schema/loader/20 条/runner）。结构注记：knowledge/stores.py 为防 routers/测试逻辑重复的新增小模块；
+  GET /knowledge/search 为 DoD（HTTP 测字段<200ms）驱动的最小 F2.1 骨架（无 LLM/融合）。
 - task-3 P0 冒烟 PASS（2026-09-14），P0 风险关闭（vendor 上游取数，SHA256 已验，五步全绿）
 - task-4 建库+打包（2026-09-14）：database/（connection 单连接/WAL/双扩展/绝对锚定BASE=env→_MEIPASS→sidecar；
   schema user_version 迁移框架；v001 全量 DDL：stores/qa_pairs/fields/field_aliases+idx/ft_qa+ai/ad/au/vec_local512/vec_cloud3072/session_events）；
@@ -13,7 +20,7 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- task-4 已完工待提交；本机已跑验收（见实测数字档案）。
+- task-5 已完工待提交；全量 pytest 44 passed（见下）。
 
 ## 待人工验证
 - 需 Rust + MSVC Build Tools 机器：`cargo test`（protocol 3 例 + degradation 3 例 + manager 2 例）通过；`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
@@ -46,3 +53,12 @@
   System32 下四校验两次 ALL PASS）。实测修正两处：① BASE 开发态取 sidecar/（非项目根，
   否则 vendor 路径错位，迁移单测已锁定）；② PyInstaller 6 不自动记入 sidecar/src 到 pathex，
   build.py 显式 --paths 修复（漏收录则启动即 ModuleNotFoundError）。pyproject 新增 sqlite-vec>=0.1。
+- task-5（2026-09-14）：全量 pytest **44 passed**（旧 25 + 新 19：compiler 6 / retrieval 6 / routers 5 / eval 2）。
+  DoD：MD 三表（qa=2/fields=2/aliases=7）内容正确；JSON（qa=2/fields=2/aliases=3，退货期限归一化，
+  vocab_miss=1 事件）；中文 jieba + 拼音 simple 命中；字段 HTTP timings_ms.field<200ms（实测 ~0.05ms）；
+  rejected 直接+HTTP 双排除；PUT current 后无 store_id 检索跟随新库（B 有命中→A 无命中）。
+  eval demo（8 QA，20 题）：top3/top5=1.0（17 scored），field_hit=0.176，avg field 0.05ms / fts 26ms（含首查懒加载）。
+  实测发现（已写进 fts5_search.py 注释，引擎按 PRD 初值未动，示例题按关键词式校准）：
+  ① jieba/simple_query 为 AND 语义（含虚词），自然长问句易整体落空——D6 应先关键词提取；
+  ② FTS5 idf=ln((N-n+0.5)/(n+0.5))，N=2/n=1 时 idf=ln(1)=0，合法命中也被 -0.5 门限滤掉——
+  阈值必须真实规模语料标定，禁止为迁就 demo 调门限。
