@@ -1,8 +1,9 @@
 """Sidecar entrypoint: bind 127.0.0.1 ephemeral port, start uvicorn, print handshake.
 
-Contract (R2, skeleton scope):
+Contract (R2, R8):
 - stdout prints exactly one JSON handshake line with flush=True.
-- token is generated (secrets.token_urlsafe(32)) but NOT enforced yet.
+- token is generated (secrets.token_urlsafe(32)), kept in process memory
+  only (never logged/persisted), and enforced on every non-health route.
 - uvicorn must finish binding BEFORE the handshake is printed; bind
   failure exits non-zero without printing a handshake.
 """
@@ -19,6 +20,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app import VERSION, app  # noqa: E402
+from core.auth import init_token  # noqa: E402
 
 PROTOCOL_VERSION = "1.0"
 
@@ -55,6 +57,7 @@ def wait_for_health(port: int, timeout_s: float = 10.0) -> bool:
 def main() -> None:
     port = pick_port()
     auth_token = secrets.token_urlsafe(32)
+    init_token(auth_token)  # enforce on all non-health routes (same process)
 
     import uvicorn
 

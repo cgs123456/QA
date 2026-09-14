@@ -6,8 +6,11 @@ pub mod sidecar;
 pub mod tray;
 pub mod updater;
 
-use sidecar::manager::{get_sidecar_status, spawn_and_handshake, SidecarState};
-use tauri::Manager;
+use sidecar::manager::{
+    get_sidecar_credentials, get_sidecar_degraded, get_sidecar_status, kill_sidecar_tree_blocking,
+    retry_sidecar_start, supervise, SidecarState,
+};
+use tauri::RunEvent;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,20 +20,22 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                match spawn_and_handshake().await {
-                    Ok(hs) => {
-                        if let Some(state) = handle.try_state::<SidecarState>() {
-                            state.set(hs).await;
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("[sidecar] startup failed: {e}");
-                    }
-                }
+                supervise(handle).await;
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_sidecar_status])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .invoke_handler(tauri::generate_handler![
+            get_sidecar_status,
+            get_sidecar_credentials,
+            get_sidecar_degraded,
+            retry_sidecar_start
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let RunEvent::Exit = event {
+                // R7: never leave a stray python process behind.
+                kill_sidecar_tree_blocking(app_handle);
+            }
+        });
 }
