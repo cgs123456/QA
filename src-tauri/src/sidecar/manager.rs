@@ -404,6 +404,9 @@ pub async fn supervise(app: AppHandle) {
                 let port = hs.port;
                 set_handshake(&app, hs).await;
                 clear_degraded(&app).await;
+                // Fresh (possibly restarted, memory-empty) sidecar →
+                // re-push the selected provider key, if any (best-effort).
+                crate::security::push::push_llm_secret(&app).await;
                 let outcome = monitor_child(&app, child, port, &mut failures).await;
                 let healthy_seen = match outcome {
                     MonitorOutcome::Exited { healthy_seen } => healthy_seen,
