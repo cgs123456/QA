@@ -1,6 +1,81 @@
 # PROGRESS.md — InterviewCopilot
 
 ## 已完成
+- task-14 Rust→sidecar 音频 WS 全链路（2026-09-14）：Rust 侧新增 `audio/uplink.rs`（WS 客户端 +
+  下行→Tauri 事件桥），sidecar 侧段缓冲按 R13 改造，并补上**真实 uvicorn** 的跨语言 e2e。
+  **本次查出两个会让整条音频链路静默失效的问题（都是既有代码，非本次引入）**：
+  ① **打包/依赖里缺 WebSocket 实现 → `/audio/stream` 全挂**。`pyproject.toml` 只声明
+     `uvicorn>=0.30`，`requirements-lock.txt` 42 个 pin 里没有 `websockets`/`wsproto`。
+     uvicorn 的 `ws="auto"` 在两者都缺时**不降级**，而是对升级请求直接返回 **404**——
+     实测：装 `websockets` 前 no-token / wrong-token / good-token **三个用例全是 404**；
+     装后 good-token 才 101。既有 pytest 全绿是因为 FastAPI `TestClient` 走进程内 ASGI，
+     **完全绕过 uvicorn**，所以这个洞一直没被看见。
+     修：`pyproject.toml` 加 `websockets>=13`；`requirements-lock.txt` 加 `websockets==17.1`；
+     `sidecar/build.py` 加 `--collect-all websockets`（uvicorn 是**动态** import，
+     PyInstaller 静态分析看不到，不 collect 则**打包产物照样 404**）。
+  ② **鉴权失败的线上形态是 HTTP 403，不是 WS close 1008**。`accept` 之前 `close()` 在真实
+     ASGI 服务器上表现为握手失败（uvicorn 回 403）；`code=1008` 只在 `TestClient` 下可见。
+     **裁定：不改 sidecar**——「accept 之前拒绝」是有意的安全姿态（不为未鉴权对端建立 WS 会话），
+     且 RFC 6455 §4.1 明确允许握手期返回 HTTP 错误；更重要的是 403 让 Rust 客户端**快速失败**
+     （`connect` 直接返回 `Unauthorized`），而 1008 只能在连上之后再关闭，反而丢失 fail-fast。
+     客户端两种形态都识别：`UplinkError::Unauthorized{401|403}` + `UplinkStats::close_code=Some(1008)`。
+     → 与 DoD 字面「失败 1008」有偏差，**已在 `docs/api-contract.md` WS 节记录实测形态**，待主人裁定是否改为 accept-then-close。
+  **顺手修一个真 bug（sidecar）**：`audio_stream` 的接收循环把**正常断开**（`websocket.disconnect`
+  消息，不是异常）当成 `malformed += 1`，导致每个正常会话结束时该计数都虚增 1，计数失去意义。
+  现按 `msg["type"] == "websocket.disconnect"` 正常退出；文本帧仍计 malformed。
+  **R13 缓冲策略变更（1b-1 → task-14，需知会）**：1b-1 定为「单段 ≤32MB，超则自动封段转写部分」；
+  task-14 明确要求「有界队列，满则丢最旧 + 告警（R13）」，故改为**丢最旧帧 + `dropped_oldest` 计数
+  + 每段一次 `segment_truncated` 告警**，上限改为 `MAX_SEGMENT_FRAMES = 2000`（60s，是端点规格
+  15s 的 4×）。代价：触顶时段首部音频被丢；收益：与 Rust 侧 `DropOldestQueue` 语义一致，
+  且不会把 8.7 分钟音频整段送 ASR。
+  Rust 侧设计裁定：① **wire seq 由 uplink 独占**（R10 要求音频与事件共享一个序号空间；两套计数器
+  一旦交错就必然撞号），在**入队时**打号，因此被 R13 丢弃的帧在对端表现为 seq 空洞——丢帧可见；
+  `Frame16k.seq` 保留为采集侧生产者计数。② 出站队列 `OUT_QUEUE_CAPACITY = 128`（≈3.8s），
+  自建 mutex+deque+`Notify` 的**异步**丢最旧队列（std mpsc / tokio mpsc 都只能拒最新，不满足 R13）。
+  ③ 下行经 `EventSink` trait 桥接（生产 `TauriSink` → `AppHandle::emit`；测试记录型替身），
+  故 `asr_start/partial/final/error → asr://start|partial|final|error` 的映射无需 Tauri 运行时即可测。
+  ④ 事件在客户端**先本地校验**（event 取值 / path 合法 / ts_ms 为 int / path 与本连接一致），
+  把本该在对端 `violations` 计数里体现的错误变成即时 `UplinkError`。⑤ `UplinkConfig` 手写 `Debug`
+  脱敏 token（R8/R14）。
+  数字：`cargo test` **71 passed**（lib 67，其中 uplink 新增 19；集成 1；跨语言 e2e 3）
+  + `clippy --all-targets -D warnings` **零告警** + rustfmt clean；
+  `pytest` **124 passed**（`test_audio_protocol.py` 13→17）。
+  **既有失败 1 例（与本次无关，环境性）**：`test_providers.py::test_ollama_connection_error`
+  期望 `connection|timeout`，实际得 `http`（502）——该用例连 `http://127.0.0.1:1`，
+  本沙箱出口代理对 127.0.0.1:1 回 502 而非拒连；`git diff` 确认未触碰 `generation/`。
+  新增文件：`src-tauri/src/audio/uplink.rs`、`src-tauri/tests/audio_ws_e2e.rs`、
+  `scripts/serve_audio_e2e.py`（真实 uvicorn 测试对端）。
+  未做（记账）：uplink 断线**不自动重连**（只置 `closed` 标志，重连策略待定）；
+  R13 丢帧"在对端可见为 seq 空洞"这一性质由单测覆盖，未做 e2e 断言（出站队列与 socket 缓冲
+  竞态使其非确定）；Tauri 事件到前端的端到端订阅未走查（需壳）。
+- 1b-4 VAD 抽象层（2026-09-14，**仅 `vad.rs`；`endpoint.rs` 与双路事件合并尚未做**）：
+  `audio/vad.rs` 落地 `Vad` trait + `WebrtcVad`（默认 Provider）+ `SileroVad` 预留 stub。
+  参数记录在案：**aggressiveness 初值 2**（`DEFAULT_AGGRESSIVENESS`，= libfvad mode 2
+  `Aggressive`）；30ms / 480 samples / 16kHz 由 `const _` 断言在**编译期**钉死——若日后改
+  `frame.rs` 使该组合不再是合法 libfvad 帧，编译直接失败，不会留到运行期静默。
+  **R19 关闭动作与意外发现**：`cargo add webrtc-vad`（0.4.0，上游 2540 天未更新）编译通过
+  （MSVC，31.56s），但**读源码后发现两个把"非语音"静默化的入口**，正是 R19 所指
+  "已知音频兼容问题"，且二者都不是靠"参数配错"触发：
+  ① `Vad::new()` 默认 **8 kHz**。crate 的 `is_voice_segment` 只接受 10/20/30ms 帧；480 samples
+     在 8 kHz 下是 60ms 帧 → `Err(())`。调用方若把 `Err` 当 `false`，整路永久静音且零报错。
+     → 构造时强制 `SampleRate::Rate16kHz`。
+  ② 更隐蔽：`Vad::reset()` 即 `fvad_reset()`，实现为 `WebRtcVad_InitCore()` + `rate_idx = 0`，
+     即**把采样率打回 8 kHz、模式打回 0**（`kDefaultMode = 0` = Quality）。分段状态机在段边界
+     调 reset 是最自然的动作，一旦调用，此后每帧都非法 → 同一静默失效，但由**正常代码路径**
+     触发而非误配。→ `WebrtcVad::reset()` 后重新钉回 rate+mode（`reapply_config`），
+     并有回归测试同时证明"裸 crate 确实会掉"与"我们的封装不会掉"。
+  设计裁定：① `Vad::is_voiced` 返回 `Result`，**不把 provider 错误折叠为 `false`**——
+     "判为静音"与"未能判定"必须可区分；② 拒绝计数（`WebrtcVad::errors`）把该状态暴露出来（R13）；
+     ③ trait **不要求 `Send`**：`webrtc_vad::Vad` 持裸 `*mut Fvad`，诚实的契约是"一实例一线程"，
+     由各路 VAD worker 自行构造，不用 `unsafe impl Send` 绕过去；④ 手写 `Debug`，裸指针不进日志（R14）。
+  silero：本轮**不引入 `ort`**（stub 不可构造，`is_voiced` 返回 `Unavailable`）。理由：silero 集成含
+  ONNX 模型下载，是 W4 交付项且有独立的体积/延迟预算（PRD §3.6 / W4）；现 stub 只钉住 W4 需满足的形状。
+  数字：`cargo test --lib` **48 passed**（audio 39，其中 vad 新增 13）；集成 **1 passed**；
+  `clippy --all-targets -D warnings` **零警告**；`rustfmt --check` 干净。
+  合成样本实测（webrtc-vad 0.4.0，版本已锁）：speech-like 合成信号 **100/100 帧 voiced**
+  （mode 0/1/2/3 全部 100/100），纯静音 **0/100**。→ 该信号足以证"非退化"（确实在判语音），
+  但**饱和到无法区分 aggressiveness 档位**，因此不能替代真实人声；真机人声自测仍是未做的独立步骤。
+  未做（等下一步任务）：`endpoint.rs` 端点状态机、双路独立 VAD + 事件合并、DoD 边界误差 <1 帧测试。
 - 1b-3 Rust 双路采集（2026-09-14）：`audio/` 八模块落地，三路来源（Windows WASAPI
   loopback / 全平台 cpal mic / Linux cpal monitor）共用一条采集管线与一个 trait。
   接手时是半成品且不可编译（17 个错误），本次修/建的实情：
@@ -84,17 +159,28 @@
 
 ## 当前
 - Phase 1b 进行中：R9–R14 已接受；1b-1（Python WS 音频协议）已提交（`c08ab44`）。
-  **1b-3（Rust 双路采集到"可发送帧"）完工待提交**：`src-tauri/src/audio/` 八个模块
+  1b-3（Rust 双路采集到"可发送帧"）已提交（`c527511`）：`src-tauri/src/audio/` 八个模块
   （`frame` / `loopback` / `resample` / `cpal_common` / `cpal_mic` / `cpal_monitor` /
   `wasapi_loopback` / `mod`）——Windows loopback + 全平台 mic + Linux monitor 三路
   统一到 `LoopbackSource` trait 与同一条 `CapturePipeline`（原生率/声道 → downmix 单声道
   → rubato 16k → 480 帧 → int16(VAD) + float32(WS) 双输出）。
-  全量：cargo test **35** + 集成 **1**（设备无关 WAV 往返与内容校验）+ clippy 零警告 +
+  **1b-4 `vad.rs` 已落地（未提交）**：`Vad` trait + `WebrtcVad`（默认，aggressiveness 初值 2）
+  + `SileroVad` stub（W4 用，本轮不引 `ort`）；R19 编译门通过，并查出两个静默失效入口
+  （crate 默认 8 kHz / `reset()` 打回 8 kHz+mode 0），已封装补偿并有回归测试，详见上节。
+  全量：cargo test **48** + 集成 **1**（设备无关 WAV 往返与内容校验）+ clippy 零警告 +
   音频模块 rustfmt clean。
-  下一项：1b-2（whisper 实转写）与 WS 上行接线（把 `Frame16k` 经 `encode_ws_frame`
-  推给 sidecar `/audio/stream`）。
+  下一项（等主人派单）：`endpoint.rs` 端点状态机 → 双路独立 VAD + 事件合并进统一 WS 上行队列
+  → DoD（合成样本边界误差 <1 帧、双路互不干扰）；其后 1b-2（whisper 实转写）与 WS 上行接线
+  （把 `Frame16k` 经 `encode_ws_frame` 推给 sidecar `/audio/stream`）。
 
 ## 待人工验证
+- 1b-4 VAD 真实人声自测（**必做，合成样本不能替代**）：合成 speech-like 信号在四个 mode 下
+  都是 100/100 voiced（见上节），饱和到区分不出档位，只能证明"非退化"。必须用真实人声：
+  ① 录一段"说话—停顿—说话"的真实 16k 单声道素材（或直接用 1b-3 的 `record_loopback`
+     产物），过 `WebrtcVad` 看 voiced 比例是否随 aggressiveness 单调变化；
+  ② 确认静音段与说话段的 voiced 比例有明显分离（而非全 voiced / 全 silence）；
+  ③ 观察 `WebrtcVad::errors()` 全程为 0——非 0 即说明帧长/采样率契约被破坏。
+  这是 W4 调参的输入，也是 R19 "无已知音频兼容问题"结论的最终依据。
 - 1b-3 真机音频（需有声卡的 Windows 机器 + 人耳；本次按用户指示未跑）：
   ① `cargo run --release --example record_loopback -- 10 out.wav`——**先播放音乐再运行**，
      然后听 `out.wav` 确认内容正确。脚本自身已校验帧数/seq 连续/ts 派生/WAV 长度/

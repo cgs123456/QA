@@ -27,8 +27,10 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def _stub_provider():
     audio_mod.set_asr_provider(StubASRProvider(text=SECRET_TEXT))
+    audio_mod._LAST_COUNTERS = None
     yield
     audio_mod.set_asr_provider(StubASRProvider(text=SECRET_TEXT))
+    audio_mod._LAST_COUNTERS = None
 
 
 def _headers(token=TEST_TOKEN):
@@ -233,3 +235,103 @@ def test_r14_no_transcript_in_logs(capsys):
     out, err = capsys.readouterr()
     assert SECRET_TEXT not in out
     assert SECRET_TEXT not in err
+
+
+# --- task-14 DoD ---------------------------------------------------------
+
+
+def test_hundred_frames_buffer_matches_duration_within_one_frame():
+    """DoD：100 帧后 segment_end → 缓冲恰好 3.0s 的 float32，且与 duration_ms 一致（±1 帧）。"""
+    stub = StubASRProvider(text="x")
+    audio_mod.set_asr_provider(stub)
+    frames = 100
+    ts0 = 1000
+    with client.websocket_connect("/audio/stream", headers=_headers()) as ws:
+        ws.send_bytes(_start(0, ts0))
+        ws.receive_json()  # asr_start
+        for i in range(frames):
+            ws.send_bytes(_audio(1 + i, ts0 + (i + 1) * audio_mod.FRAME_MS, 0.25))
+        ws.send_bytes(_end(1 + frames, ts0 + frames * audio_mod.FRAME_MS))
+        final = ws.receive_json()
+    assert final["type"] == "asr_final"
+
+    assert len(stub.calls) == 1
+    size, rate = stub.calls[0]
+    assert rate == 16000
+    # 缓冲恰好是 100 帧 float32：字节数精确，不是"约等于"。
+    assert size == frames * audio_mod.AUDIO_PAYLOAD_BYTES == 192_000
+
+    # 由缓冲字节数反推时长，必须与下行 duration_ms 在 1 帧内一致。
+    buf_ms = size * audio_mod.FRAME_MS // audio_mod.AUDIO_PAYLOAD_BYTES
+    assert buf_ms == 3000
+    assert final["duration_ms"] == 3000
+    assert abs(final["duration_ms"] - buf_ms) <= audio_mod.FRAME_MS
+
+    assert audio_mod.last_counters()["dropped_oldest"] == 0
+
+
+def test_segment_buffer_bounded_drops_oldest(monkeypatch):
+    """R13：单段缓冲有界，满则丢最旧 + 计数 + 每段只告警一次。"""
+    cap = 5
+    monkeypatch.setattr(audio_mod, "MAX_SEGMENT_FRAMES", cap)
+    stub = StubASRProvider(text="x")
+    audio_mod.set_asr_provider(stub)
+    sent = cap + 3
+    with client.websocket_connect("/audio/stream", headers=_headers()) as ws:
+        ws.send_bytes(_start(0, 0))
+        ws.receive_json()  # asr_start
+        for i in range(sent):
+            ws.send_bytes(_audio(1 + i, (i + 1) * audio_mod.FRAME_MS, 0.1))
+        # 首次丢帧即告警（只有一次，后续丢帧只计数）。
+        warn = ws.receive_json()
+        assert warn == {"type": "asr_error", "segment_id": "seg_1",
+                        "error": "segment_truncated", "path": "loopback", "ts_ms": 0}
+        ws.send_bytes(_end(1 + sent, (sent + 1) * audio_mod.FRAME_MS))
+        final = ws.receive_json()
+    assert final["type"] == "asr_final"
+
+    # 保留最近 cap 帧（丢的是最旧），段仍然闭合。
+    assert len(stub.calls) == 1
+    size, _ = stub.calls[0]
+    assert size == cap * audio_mod.AUDIO_PAYLOAD_BYTES
+    assert audio_mod.last_counters()["dropped_oldest"] == sent - cap == 3
+
+
+def test_seq_gap_increments_counter_and_resyncs():
+    """DoD：跳号 → 计数 +1，且连接继续可用（按收到的重同步）。"""
+    stub = StubASRProvider(text="x")
+    audio_mod.set_asr_provider(stub)
+    with client.websocket_connect("/audio/stream", headers=_headers()) as ws:
+        ws.send_bytes(_start(0, 0))
+        ws.receive_json()
+        ws.send_bytes(_audio(1, 30, 0.3))
+        ws.send_bytes(_audio(9, 60, 0.4))   # 跳号 2..8
+        ws.send_bytes(_audio(10, 90, 0.5))
+        ws.send_bytes(_end(11, 120))
+        assert ws.receive_json()["type"] == "asr_final"
+    counters = audio_mod.last_counters()
+    assert counters["seq_gap"] == 1
+    assert counters["malformed"] == 0
+    assert counters["violations"] == 0
+    # 三帧都进了缓冲：跳号只告警，不丢数据。
+    assert stub.calls[0][0] == 3 * audio_mod.AUDIO_PAYLOAD_BYTES
+
+
+def test_vad_heartbeat_never_enters_audio_buffer():
+    """DoD：vad_state 心跳帧不得进入音频缓冲。"""
+    stub = StubASRProvider(text="x")
+    audio_mod.set_asr_provider(stub)
+    with client.websocket_connect("/audio/stream", headers=_headers()) as ws:
+        ws.send_bytes(_start(0, 0))
+        ws.receive_json()
+        for i in range(5):
+            ws.send_bytes(_event(1 + i, (i + 1) * 1000,
+                                 {"event": "vad_state", "ts_ms": (i + 1) * 1000,
+                                  "path": "loopback", "state": "silence"}))
+        ws.send_bytes(_audio(6, 6000, 0.2))
+        ws.send_bytes(_end(7, 6030))
+        assert ws.receive_json()["type"] == "asr_final"
+    assert stub.calls[0][0] == audio_mod.AUDIO_PAYLOAD_BYTES  # 只有 1 帧音频
+    counters = audio_mod.last_counters()
+    assert counters["vad_heartbeat"] == 5
+    assert counters["violations"] == 0

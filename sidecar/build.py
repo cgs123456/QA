@@ -7,6 +7,10 @@
   会静默打包空目录 → scripts/verify-packaged.py 第 1 条校验显式点名缺失文件兜底。
 - sqlite_vec 用 --collect-all 兜底（vec0 动态库若是包数据而非导入模块，
   常规分析会漏掉；verify 第 3 步证明它真的在包里）。
+- websockets 同样用 --collect-all 兜底，理由更硬：uvicorn 在 `ws="auto"` 时
+  **动态** import 它（uvicorn/config.py 里的 import_from_string），静态分析看不到。
+  漏掉的后果不是"降级"而是 **WS 全挂**：uvicorn 对 /audio/stream 的升级请求直接
+  返回 404，Rust 客户端永远连不上（task-14 实测：装 websockets 前三个用例全 404）。
 - 保留控制台（stdout 握手行是 R2 契约）。
 """
 
@@ -50,6 +54,8 @@ def main() -> None:
         "--paths", str(SIDECAR_SRC),
         "--add-data", f"{VENDOR}{sep}vendor",
         "--collect-all", "sqlite_vec",
+        # uvicorn 动态 import WS 实现，静态分析看不到；漏了则 /audio/stream 404。
+        "--collect-all", "websockets",
         "--distpath", args.distpath,
         "--workpath", args.workpath,
         "--specpath", args.workpath,

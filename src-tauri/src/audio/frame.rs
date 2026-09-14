@@ -10,7 +10,9 @@ pub const FRAME_MS: u64 = 30;
 pub const F32_BYTES: usize = FRAME_SAMPLES * 4; // 1920
 pub const HEADER_BYTES: usize = 7;
 pub const WIRE_BYTES: usize = HEADER_BYTES + F32_BYTES; // 1927
+/// R10: the first byte is dual-purpose — binary audio vs JSON event.
 pub const TYPE_AUDIO: u8 = 0x00;
+pub const TYPE_EVENT: u8 = 0x01;
 
 /// One 30ms mono frame at 16kHz, dual representation (R11: int16 for VAD,
 /// float32 for WS — converted once here, never twice downstream).
@@ -61,6 +63,20 @@ pub fn encode_ws_frame(seq: u16, ts_ms: u32, pcm: &[f32; FRAME_SAMPLES]) -> [u8;
     out
 }
 
+/// R10 event encoding: `[0x01][seq u16le][ts_ms u32le][UTF-8 JSON]`.
+///
+/// Same 7-byte header as an audio frame and the **same seq space** (the sidecar
+/// checks continuity across both kinds). Length is variable, so the caller must
+/// not assume a fixed frame size — only audio frames are 1927B.
+pub fn encode_ws_event(seq: u16, ts_ms: u32, json: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(HEADER_BYTES + json.len());
+    out.push(TYPE_EVENT);
+    out.extend_from_slice(&seq.to_le_bytes());
+    out.extend_from_slice(&ts_ms.to_le_bytes());
+    out.extend_from_slice(json);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,6 +101,20 @@ mod tests {
         assert_eq!(&wire[3..7], &[0x01, 0x02, 0x03, 0x04]);
         assert_eq!(&wire[7..11], &1.0f32.to_le_bytes());
         assert_eq!(&wire[1927 - 4..], &(-1.0f32).to_le_bytes());
+    }
+
+    #[test]
+    fn event_frame_has_the_same_header_and_a_json_body() {
+        let json = br#"{"event":"segment_start","ts_ms":12345,"path":"loopback"}"#;
+        let wire = encode_ws_event(0x0201, 0x04030201, json);
+        assert_eq!(wire[0], TYPE_EVENT);
+        // R10: header is little-endian for both frame kinds.
+        assert_eq!(&wire[1..3], &[0x01, 0x02]);
+        assert_eq!(&wire[3..7], &[0x01, 0x02, 0x03, 0x04]);
+        assert_eq!(&wire[7..], json);
+        assert_eq!(wire.len(), HEADER_BYTES + json.len());
+        // Event frames are variable length — only audio frames are 1927B.
+        assert_ne!(wire.len(), WIRE_BYTES);
     }
 
     #[test]

@@ -9,6 +9,9 @@
 //! - [`cpal_mic`]: cross-platform microphone (cpal).
 //! - [`cpal_monitor`] (Linux): PulseAudio monitor pick.
 //! - [`wasapi_loopback`] (Windows): default render-device loopback.
+//! - [`vad`]: the `Vad` trait, the webrtc-vad provider, and the silero stub.
+//! - [`uplink`]: the WS client to the sidecar's `/audio/stream` (R9–R14) and
+//!   the downlink → Tauri event bridge.
 //!
 //! Platform matrix (Phase 1b): Windows = loopback + mic, Linux = monitor + mic,
 //! macOS = mic only — the UI must say so. VAD consumes `int16` downstream
@@ -19,6 +22,8 @@ pub mod cpal_mic;
 pub mod frame;
 pub mod loopback;
 pub mod resample;
+pub mod uplink;
+pub mod vad;
 
 #[cfg(target_os = "linux")]
 pub mod cpal_monitor;
@@ -27,8 +32,8 @@ pub mod wasapi_loopback;
 
 pub use cpal_common::{CpalCapture, CpalTarget};
 pub use frame::{
-    encode_ws_frame, f32_to_i16, i16_to_f32, Frame16k, F32_BYTES, FRAME_MS, FRAME_SAMPLES,
-    HEADER_BYTES, SAMPLE_RATE, TYPE_AUDIO, WIRE_BYTES,
+    encode_ws_event, encode_ws_frame, f32_to_i16, i16_to_f32, Frame16k, F32_BYTES, FRAME_MS,
+    FRAME_SAMPLES, HEADER_BYTES, SAMPLE_RATE, TYPE_AUDIO, TYPE_EVENT, WIRE_BYTES,
 };
 pub use loopback::{
     AudioError, CaptureEvent, CapturePipeline, CaptureStats, DropOldestQueue, EventQueue,
@@ -38,6 +43,12 @@ pub use resample::{
     decode_interleaved_f32_le_to_mono, downmix_interleaved_f32_to_mono,
     downmix_interleaved_i16_to_mono_f32, downmix_stereo_f32_to_mono, MonoResampler16k,
 };
+pub use uplink::{
+    tauri_event_name, AudioUplink, EventSink, PathLabel, TauriSink, UplinkConfig, UplinkError,
+    UplinkSnapshot, EVT_ASR_ERROR, EVT_ASR_FINAL, EVT_ASR_PARTIAL, EVT_ASR_START,
+    OUT_QUEUE_CAPACITY,
+};
+pub use vad::{open_default as open_default_vad, Vad, VadError, WebrtcVad, DEFAULT_AGGRESSIVENESS};
 
 #[cfg(target_os = "linux")]
 pub use cpal_monitor::{open_default_monitor, PATH_LABEL as MONITOR_PATH_LABEL};

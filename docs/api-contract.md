@@ -57,6 +57,15 @@ PRD 只定义 POST 触发；进度轮询约定如下：`status ∈ queued/downlo
 鉴权（R9）：`Authorization: Bearer <token>` Header（accept 之前校验），
 缺失/错误 → close code=1008。禁止 URL query 传 token。
 
+> **线上实测（task-14，真实 uvicorn）**：`accept` 之前 `close()` 在真实 ASGI 服务器上
+> 表现为 **HTTP 403**（握手不完成，客户端看不到 WS close 帧）；`code=1008` 只在
+> FastAPI `TestClient`（进程内直连 ASGI）下可见。两种形态都被视为"token 被拒"：
+> Rust 客户端 `UplinkError::Unauthorized{status:401|403}` 覆盖前者，
+> `UplinkStats::close_code=Some(1008)` 覆盖后者。
+> 另：uvicorn `ws="auto"` 缺少 `websockets`/`wsproto` 时**不降级**，而是对本端点
+> 返回 404（音频链路整体失效）——依赖与打包收集见 `sidecar/pyproject.toml`
+> 与 `sidecar/build.py`。
+
 ### 上行帧（Rust → sidecar，二进制，R10）
 
 帧头 `[1B type][2B seq_le][4B timestamp_ms_le]`：

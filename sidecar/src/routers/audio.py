@@ -9,9 +9,17 @@
 - segment_id 由 sidecar 按连接内 start 顺序分配（`seg_{n}`）；end 须匹配已打开段。
 - 同 path 重复 start：旧段按 interrupted 丢弃（计数 + asr_error）。
 - 有界（R13）：每连接待转写 ≤8（超则本段丢弃 + dropped_overload + 计数）；
-  单段缓冲 ≤32MB（超则自动封段转写部分）；接收循环永不 await 转写；
+  **单段帧缓冲 ≤MAX_SEGMENT_FRAMES，超则丢最旧帧 + dropped_oldest 计数 +
+  每段一次 `segment_truncated` 告警**；接收循环永不 await 转写；
   下行发送串行锁 + 5s 超时，超时/断开即清理连接。
 - 内容无关：本模块零打印；转写文本只进下行 JSON（R14）。
+
+**1b-1 → task-14 缓冲策略变更（记录）**：1b-1 定为「单段 ≤32MB，超则自动封段转写部分」。
+task-14 明确要求「有界队列，满则丢最旧 + 告警（R13）」，故改为丢最旧帧。理由：
+① R13 的语义就是丢最旧，与 Rust 侧 `DropOldestQueue` 保持一致；
+② 端点规格单段上限 15s（500 帧），60s 上限已有 4× 余量，触顶即说明上游端点逻辑或
+   对端异常，此时「保留最近 60s 并告警」比「把 8.7 分钟的音频整段送 ASR」更可控。
+代价：触顶时段首部音频被丢弃（计数 + 告警可观测）。
 
 鉴权（R9）：Authorization Header，缺失/错误 → close code=1008（accept 之前）。
 """
@@ -19,6 +27,7 @@
 import asyncio
 import secrets
 import struct
+from collections import deque
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -33,18 +42,32 @@ EVENT_FRAME = 0x01
 AUDIO_SAMPLES = 480
 AUDIO_PAYLOAD_BYTES = AUDIO_SAMPLES * 4
 AUDIO_FRAME_BYTES = FRAME_HEADER.size + AUDIO_PAYLOAD_BYTES  # 1927
+FRAME_MS = 30
 VALID_PATHS = ("loopback", "mic")
 MAX_PENDING = 8
-MAX_SEGMENT_BYTES = 32 * 1024 * 1024
+# R13 bound on one segment's frame buffer. The endpoint spec caps a segment at
+# 15 s (500 frames); 60 s is 4x headroom. Overflow means the peer is not sending
+# segment_end (or the endpoint logic is broken), so keeping the most recent 60 s
+# and warning beats shipping a multi-minute blob to ASR.
+MAX_SEGMENT_FRAMES = 2000
 SEND_TIMEOUT_S = 5.0
 
 _PROVIDER = None
+# Diagnostics hook: counters of the most recently closed connection. Kept so
+# tests (and a future /diagnostics route) can assert on drops/gaps, which are
+# otherwise invisible to the peer by design (R14: no content, counters only).
+_LAST_COUNTERS: dict | None = None
 
 
 def set_asr_provider(provider) -> None:
     """注入 ASR provider（测试/1b-2 接线用）。"""
     global _PROVIDER
     _PROVIDER = provider
+
+
+def last_counters() -> dict | None:
+    """Counters of the most recently closed connection (None if never opened)."""
+    return _LAST_COUNTERS
 
 
 def _new_counters() -> dict:
@@ -55,6 +78,7 @@ def _new_counters() -> dict:
         "violations": 0,
         "interrupted": 0,
         "dropped_overload": 0,
+        "dropped_oldest": 0,
         "vad_heartbeat": 0,
     }
 
@@ -117,7 +141,7 @@ async def _ship(conn: _Conn, seg: dict) -> None:
 
 async def _transcribe(conn: _Conn, provider, seg: dict) -> None:
     try:
-        text = await provider.transcribe(bytes(seg["buf"]))
+        text = await provider.transcribe(b"".join(seg["buf"]))
         await _send(conn, {"type": "asr_final", "segment_id": seg["id"],
                            "text": text, "path": seg["path"],
                            "ts_ms": seg["ts_start"],
@@ -139,15 +163,6 @@ async def _transcribe(conn: _Conn, provider, seg: dict) -> None:
         conn.in_flight -= 1
 
 
-async def _auto_finalize(conn: _Conn) -> None:
-    seg = conn.open_seg
-    conn.open_seg = None
-    if seg is None:
-        return
-    seg["ts_end"] = seg["ts_start"]
-    await _ship(conn, seg)
-
-
 async def _on_audio(conn: _Conn, ts_ms: int, payload: bytes) -> None:
     if len(payload) != AUDIO_PAYLOAD_BYTES:
         conn.counters["malformed"] += 1
@@ -156,9 +171,20 @@ async def _on_audio(conn: _Conn, ts_ms: int, payload: bytes) -> None:
     if seg is None or conn.path is None:
         conn.counters["unsolicited_audio"] += 1
         return
-    seg["buf"].extend(payload)
-    if len(seg["buf"]) >= MAX_SEGMENT_BYTES:
-        await _auto_finalize(conn)
+    buf = seg["buf"]
+    buf.append(payload)
+    if len(buf) > MAX_SEGMENT_FRAMES:
+        # R13: bounded, drop the OLDEST frame and warn once per segment. The
+        # segment stays open — segment_end still produces a final, just with a
+        # truncated head, and the truncation is visible to the client.
+        buf.popleft()
+        seg["dropped_oldest"] += 1
+        conn.counters["dropped_oldest"] += 1
+        if not seg["truncated_notified"]:
+            seg["truncated_notified"] = True
+            await _send(conn, {"type": "asr_error", "segment_id": seg["id"],
+                               "error": "segment_truncated", "path": seg["path"],
+                               "ts_ms": seg["ts_start"]})
 
 
 async def _on_event(conn: _Conn, obj: dict) -> None:
@@ -193,7 +219,8 @@ async def _on_event(conn: _Conn, obj: dict) -> None:
         conn.seg_counter += 1
         seg_id = f"seg_{conn.seg_counter}"
         conn.open_seg = {"id": seg_id, "path": path, "ts_start": ts_ms,
-                         "ts_end": ts_ms, "buf": bytearray()}
+                         "ts_end": ts_ms, "buf": deque(),
+                         "dropped_oldest": 0, "truncated_notified": False}
         await _send(conn, {"type": "asr_start", "segment_id": seg_id,
                            "path": path, "ts_ms": ts_ms})
         return
@@ -240,6 +267,7 @@ async def _on_frame(conn: _Conn, data: bytes) -> None:
 
 @router.websocket("/audio/stream")
 async def audio_stream(websocket: WebSocket):
+    global _LAST_COUNTERS
     if not _check_auth(websocket):
         await websocket.close(code=1008)
         return
@@ -253,6 +281,10 @@ async def audio_stream(websocket: WebSocket):
                 break
             except Exception:
                 break
+            # A clean client disconnect arrives here as a message, not an
+            # exception: it is a normal termination, never "malformed".
+            if msg.get("type") == "websocket.disconnect":
+                break
             data = msg.get("bytes")
             if data is None:
                 conn.counters["malformed"] += 1
@@ -263,3 +295,4 @@ async def audio_stream(websocket: WebSocket):
                 break
     finally:
         conn.alive = False
+        _LAST_COUNTERS = conn.counters
