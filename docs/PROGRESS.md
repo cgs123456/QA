@@ -48,9 +48,9 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- task-11 M1 验收 + review 完毕待提交：`docs/acceptance-m1.md`（13 通过/1 待定/1 部分/1 待人工，
-  无失败，tag 暂缓）+ `docs/review-m1.md`（独立对抗审查：实质问题 8 项修 7 受 1，附带修历史 bug 2）。
-  全量：pytest 108 + vitest 10 + Playwright 1 + tsc/eslint 0 + build/check_size 通过。
+- task-12 抽检执行完毕待提交：8 项中 6 通过（1 全量复跑/2 真题补齐/3 null 全拒/4 打包重验/5 日志红线/6 数字复核），
+  2 维持外部状态（7 降级链路待壳，8 tag 暂缓）；评测集 20→59（+39 自然真题），基线重跑 top3=0.490、
+  零答错、null 10/10，验收 #6 改判未达标（根因明确，非崩溃），tag 维持暂缓。
 
 ## 待人工验证
 - 需 Rust + MSVC Build Tools 机器：`cargo test`（protocol 3 例 + degradation 3 例 + manager 2 例）通过；`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
@@ -152,12 +152,12 @@
   测试加退避重连吸收（数据断言未放宽）；顺带证明 kill 确实命中事务窗口。
   待人工：① 连续 kill×4→降级页出现→点重试恢复（`pnpm tauri dev` 后 tasklist 找 python sidecar 进程 kill）；
   ② Rust 全链：`cargo test` + build（产 Cargo.lock）+ `cargo audit`；③ Ollama e2e（task-7 遗留）。
-- task-11 M1 验收（2026-09-14）：`docs/acceptance-m1.md` 落盘——16 项：13 通过 / 1 待定（#6 需用户 100 题，
+- task-11 M1 验收（2026-09-14，task-12 已部分改判见下）：`docs/acceptance-m1.md` 落盘——16 项：13 通过 / 1 待定（#6 需用户 100 题，
   demo 代理 17/17）/ 1 部分通过（#10 检索侧 1.4ms，LLM 首字待 Ollama）/ 1 待人工走查（#13 降级页渲染，
   链路单测全绿）；无失败项，当场修：无（验收中新发现为 0；历史 bug 均已在各自任务修完）。
   融合三案精确复核：0.5/0.5/0.75（独立算术 + 7 单测）；FTS 有数据验证全清单复核：无一处空表断言（R4）。
   tag 判定：`m1-text-pipeline` 暂缓（打 tag 会夸大完备性；三外部条件见验收报告 §4，用户可指示覆盖）。
-- 待办（外部阻塞，主人明确）：① 用户 100 题 → 重跑基线 → 更新验收报告 → 打 tag；
+- 待办（外部阻塞，主人明确）：① 评测集扩至 100 题 + D6 查询理解与重标定 → 更新验收报告 → 打 tag；
   ② Ollama 可用 → `scripts/e2e_ollama.py` 补首字数字；③ 有壳机器 → 降级页目检 + kill×4 + UI 走查；
   ④ 有 Rust 工具链 → cargo test/build/audit + Cargo.lock 入仓。
 - task-11 review 修（2026-09-14，详见 `docs/review-m1.md`）：R3 写串行落地（RLock + stores 三写 +
@@ -170,3 +170,14 @@
   接受项（有记录）：vec blanket 降级（缺模型为预期态，warnings 为观测通道）；FastAPI 0.141 路由表象。
   债务：Rust 零编译验证 / Ollama e2e / 标定 / 前端止于逻辑层 / _embedder 单例无失效处理 /
   进程内存语义（TASKS/_JOBS/secrets 重启即失，符合 TTL 语义）。
+- task-12 抽检（2026-09-14，8 项）：① 全量复跑 pytest 108 + vitest 10 + Playwright 1 全绿
+  （cargo 不可跑一贯记录；融合三案断言在仓）；② 评测集 20→59（+39 自然真题 tags=real，
+  单测改计分结构不断言分数线以防自我交易），重跑基线 **Top-3=0.490（24/49），零答错**，
+  demo 1.0 确为自测——验收 #6 改判**未达标**（根因：AND 语义 + 精确门 + 模糊上限，D6 修）；
+  距 100 题目标还差 41 题；③ null **10/10 拒答**（含纸质发票/货到付款对抗项），红线守住；
+  ④ 打包 System32 重验 ALL PASS（包内无 data/，DB 落 LOCALAPPDATA；包构建早于 nonce 变更，
+  契约行为不受影响，重打由 CI 覆盖）；⑤ 日志红线：真机全链路 stderr 136 字节，
+  token/问题原文/答案原文零命中，仓库无真实密钥（仅 sk-test-* 固件）；⑥ 四数在案
+  （体积 200060425、启动 ~1.1ms 级、sqlite 3.53.1、simple v0.7.1 + 五步耗时）；
+  ⑦ 降级链路维持待人工（需壳）；⑧ tag 不存在，维持暂缓（#6 未达标是主因）。
+   verdict 变更同步回 `docs/acceptance-m1.md`（§6 抽检结论表 + #6 改判 + 基线快照更新）。
