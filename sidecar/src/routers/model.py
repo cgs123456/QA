@@ -8,6 +8,7 @@ GET /model/download/{id} 轮询进度。下载在后台线程跑（urllib 阻塞
 import asyncio
 import secrets
 import threading
+import time
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -19,6 +20,8 @@ router = APIRouter()
 
 _JOBS: dict = {}
 _JOBS_LOCK = threading.Lock()
+# 终端态（done/error）保留时长：前端轮询到终态即停，留 5 分钟供复读。
+JOB_TTL_S = 300.0
 
 
 class DownloadBody(BaseModel):
@@ -40,6 +43,27 @@ def _record(job_id: str) -> dict:
         },
         "error": job["error"],
     }
+
+
+def _finish(job_id: str, status: str, error: str | None = None) -> None:
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if job is None:
+            return
+        job["status"] = status
+        job["error"] = error
+        job["completed_at"] = time.monotonic()
+
+
+def _sweep_jobs() -> None:
+    """清终端态超 TTL 的 record（_JOBS 只增不删即内存泄漏）。"""
+    now = time.monotonic()
+    with _JOBS_LOCK:
+        dead = [jid for jid, job in _JOBS.items()
+                if job["status"] in ("done", "error")
+                and (now - (job.get("completed_at") or now)) > JOB_TTL_S]
+        for jid in dead:
+            _JOBS.pop(jid, None)
 
 
 def _run_download(job_id: str, model_name: str) -> None:
@@ -70,13 +94,11 @@ def _run_download(job_id: str, model_name: str) -> None:
             for filename in report:
                 job["files"].setdefault(
                     filename, {"downloaded": 0, "total": None, "done": False})["done"] = True
-            job["status"] = "done"
+        _finish(job_id, "done")
     except (AllMirrorsFailed, ChecksumMismatch, DownloadError) as e:
-        with _JOBS_LOCK:
-            job = _JOBS.get(job_id)
-            if job is not None:
-                job["status"] = "error"
-                job["error"] = f"{type(e).__name__}: {e}"
+        _finish(job_id, "error", f"{type(e).__name__}: {e}")
+    except Exception as e:  # 磁盘满/权限等非下载错误：同样落终态，不让轮询死等。
+        _finish(job_id, "error", f"{type(e).__name__}")
 
 
 @router.post("/model/download")
@@ -87,8 +109,10 @@ async def start_download(body: DownloadBody):
     if model_name not in MODEL_REGISTRY:
         raise HTTPException(status_code=400, detail=f"未知模型：{model_name}")
     job_id = secrets.token_urlsafe(12)
+    _sweep_jobs()
     with _JOBS_LOCK:
-        _JOBS[job_id] = {"status": "queued", "files": {}, "error": None}
+        _JOBS[job_id] = {"status": "queued", "files": {}, "error": None,
+                         "completed_at": None}
     loop = asyncio.get_running_loop()
     loop.run_in_executor(None, _run_download, job_id, model_name)
     return {"download_id": job_id}
@@ -96,4 +120,5 @@ async def start_download(body: DownloadBody):
 
 @router.get("/model/download/{download_id}")
 async def download_status(download_id: str):
+    _sweep_jobs()
     return _record(download_id)

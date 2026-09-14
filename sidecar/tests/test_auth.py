@@ -18,7 +18,9 @@ client = TestClient(app)
 def test_health_needs_no_token():
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "version": VERSION}
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["version"] == VERSION
 
 
 def test_info_without_token_is_401():

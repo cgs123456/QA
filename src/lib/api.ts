@@ -62,6 +62,10 @@ export async function sidecarFetch(
   headers.set("Authorization", `Bearer ${token}`);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // 调用方取消信号透传（否则 useQA 的 cancel 永远到不了 fetch）。
+  const externalSignal = init?.signal as AbortSignal | undefined;
+  const onExternalAbort = () => controller.abort();
+  externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
   try {
     return await fetch(`http://127.0.0.1:${port}${path}`, {
       ...init,
@@ -69,9 +73,13 @@ export async function sidecarFetch(
       signal: controller.signal,
     });
   } catch (e) {
+    // 调用方主动取消：原样透出 AbortError（调用方可区分“取消”与“超时”）；
+    // 超时定时器触发的 abort 走错误分类。
+    if (externalSignal?.aborted) throw e;
     throw classifyFetchError(e);
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener?.("abort", onExternalAbort);
   }
 }
 

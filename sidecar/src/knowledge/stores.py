@@ -1,7 +1,13 @@
-"""知识库 CRUD（stores 表）。routers 与测试共用本模块，避免逻辑重复。"""
+"""知识库 CRUD（stores 表）。routers 与测试共用本模块，避免逻辑重复。
+
+写串行（R3）：一切写函数内部持 database.connection.write_lock，
+调用方（routers/测试）无需关心。
+"""
 
 import json
 import uuid
+
+from database.connection import write_lock
 
 
 class StoreNotFound(Exception):
@@ -17,7 +23,7 @@ def create_store(conn, name: str, template_id=None) -> dict:
     if not name:
         raise ValueError("知识库名称必填")
     sid = _new_id()
-    with conn:
+    with write_lock, conn:
         conn.execute(
             "INSERT INTO stores(id, name, template_id, is_current)"
             " VALUES (?, ?, ?, 0)",
@@ -87,7 +93,7 @@ def get_or_create_store(conn, store_id=None, store_name=None) -> dict:
 
 def set_current_store(conn, store_id: str) -> dict:
     """is_current 单选切换（同一短事务）。不存在 → StoreNotFound。"""
-    with conn:
+    with write_lock, conn:
         cur = conn.execute(
             "UPDATE stores SET is_current=1 WHERE id=?", (store_id,)
         ).rowcount
@@ -105,7 +111,7 @@ def get_current_store_id(conn):
 def delete_store(conn, store_id: str) -> None:
     """级联删除：vec 表无 FK 级联，需手工先清；qa/fields/aliases 由 FK+触发器处理。"""
     get_store(conn, store_id)  # 不存在即抛
-    with conn:
+    with write_lock, conn:
         conn.execute(
             "DELETE FROM vec_qa_local WHERE qa_id IN"
             " (SELECT id FROM qa_pairs WHERE store_id=?)",

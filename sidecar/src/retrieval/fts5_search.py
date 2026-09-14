@@ -7,7 +7,9 @@
   （如 N=2、n=1 时 idf=ln(1)=0，合法命中也被门限滤掉）——阈值必须在
   真实规模语料上标定，禁止为迁就 demo 数据调门限（D6）。
 - 每路 top_k=5；所有 SQL 过滤 usage_status='rejected'（R5）。
-- MATCH 异常输入（特殊串）兜底返回 []，不抛错。
+- MATCH 异常输入兜底：仅吞 SQLITE_ERROR(1) 的查询语法问题；缺表/缺分词器
+  （"no such table"/"no such tokenizer"）、I/O(10)/损坏(11)/忙(5)/锁(6)
+  一律上抛（qa.py 转 error 事件 + stderr 堆栈），绝不静默转 Fail-Closed。
 - jieba_query/simple_query 为 AND 语义：查询分词后的每个词都必须命中
   （含虚词），自然长问句易整体落空——D6 应先做关键词提取再调 FTS；
   本任务示例题均用关键词式问法（实测结论，非引擎缺陷）。
@@ -36,8 +38,13 @@ def _search_route(conn, store_id: str, query: str, func: str, route: str, top_k:
             " ORDER BY b ASC LIMIT ?",
             (query, store_id, top_k),
         ).fetchall()
-    except sqlite3.OperationalError:
-        return []
+    except sqlite3.OperationalError as e:
+        code = getattr(e, "sqlite_errorcode", 1)
+        msg = str(e)
+        structural = ("no such table" in msg) or ("no such tokenizer" in msg)
+        if code != 1 or structural:
+            raise  # 真故障（缺表/缺扩展/I-O/损坏/忙/锁）必须 loud，不许转 Fail-Closed
+        return []  # 纯 MATCH 查询语法问题兜底
     hits = []
     for qa_id, question, answer, category, bm25 in rows:
         if bm25 is None or bm25 >= BM25_CUTOFF:

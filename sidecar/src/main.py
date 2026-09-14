@@ -21,6 +21,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import app as _app_module  # noqa: E402 (需写回 HEALTH_NONCE，不能 from-import 值拷贝）
 from app import VERSION, app  # noqa: E402
 from core.auth import init_token  # noqa: E402
 from database.connection import (  # noqa: E402
@@ -45,19 +46,31 @@ def pick_port() -> int:
         s.close()
 
 
-def wait_for_health(port: int, timeout_s: float = 10.0) -> bool:
+def wait_for_health(port: int, nonce: str, timeout_s: float = 10.0) -> bool:
+    """轮询 /health 直到本进程的 server 就绪（nonce 匹配防端口占位者）。"""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
+        conn = None
         try:
             conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
             conn.request("GET", "/health")
             resp = conn.getresponse()
             body = resp.read()
-            conn.close()
-            if resp.status == 200 and b'"status":"ok"' in body.replace(b" ", b""):
-                return True
+            if resp.status == 200:
+                try:
+                    data = json.loads(body)
+                except ValueError:
+                    data = {}
+                if data.get("status") == "ok" and data.get("nonce") == nonce:
+                    return True
         except OSError:
             pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
         time.sleep(0.1)
     return False
 
@@ -79,6 +92,8 @@ def main() -> None:
     port = pick_port()
     auth_token = secrets.token_urlsafe(32)
     init_token(auth_token)  # enforce on all non-health routes (same process)
+    nonce = secrets.token_urlsafe(16)
+    _app_module.HEALTH_NONCE = nonce
 
     try:
         init_storage()
@@ -93,7 +108,7 @@ def main() -> None:
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
 
-    if not wait_for_health(port):
+    if not wait_for_health(port, nonce):
         print("uvicorn failed to bind/serve /health", file=sys.stderr, flush=True)
         server.should_exit = True
         sys.exit(1)

@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from knowledge.compiler import compile_store
@@ -108,3 +110,25 @@ def test_top_k_respected(db):
     for h in hits:
         per_route[h["route"]] = per_route.get(h["route"], 0) + 1
     assert all(v <= 1 for v in per_route.values())
+
+
+def test_structural_fts_errors_are_loud():
+    """缺表/缺扩展必须上抛（绝不静默转 Fail-Closed）；纯语法问题才兜底 []。"""
+    import sqlite3
+
+    from retrieval.fts5_search import _search_route
+
+    bare = sqlite3.connect(":memory:")
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            _search_route(bare, "s", "发货", "jieba_query", "jieba", 5)
+    finally:
+        bare.close()
+
+
+def test_match_syntax_error_returns_empty(db):
+    from retrieval.fts5_search import _search_route
+
+    sid = _seed(db)
+    # 不存在的查询函数 → SQLITE_ERROR 语法类 → 兜底 []。
+    assert _search_route(db, sid, "发货", "no_such_fn_xyz", "jieba", 5) == []

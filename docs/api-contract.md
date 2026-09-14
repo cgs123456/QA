@@ -17,7 +17,7 @@ Tauri 校验 `protocol_version`，不匹配 → `sidecar://degraded`（version_m
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
-| GET | `/health` | 无 | `{"status":"ok","version":"0.1.0"}` |
+| GET | `/health` | 无 | `{"status":"ok","version","nonce"}`（nonce 为本次启动随机值，未启动/直连 app 对象时为 null；防端口复用占位者） |
 | GET | `/sidecar/info` | 是 | `{"version","capabilities"}`（鉴权闭环证明） |
 | POST | `/knowledge/compile` | 是 | `{store_id?,store_name?,format,content,filename?}` → `{store_id,stats}`；400 非法输入/JSON 失败；404 store 不存在 |
 | GET | `/knowledge/list` | 是 | stores 列表（含 qa/field 计数与 is_current） |

@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { ApiError, classifyFetchError } from "./api";
+import { describe, expect, it, vi, afterEach } from "vitest";
+import { ApiError, classifyFetchError, sidecarFetch } from "./api";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: async () => ({ port: 1, token: "t" }),
+}));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("classifyFetchError", () => {
   it("passes ApiError through", () => {
@@ -30,5 +38,29 @@ describe("ApiError", () => {
     expect(err.kind).toBe("http");
     expect(err.status).toBe(500);
     expect(err.message).toContain("500");
+  });
+});
+
+describe("sidecarFetch abort", () => {
+  it("rethrows raw AbortError on caller cancel (not timeout)", async () => {
+    // 永不响应的 fetch（但遵守 signal 中止语义）+ 50ms 后取消。
+    vi.stubGlobal(
+      "fetch",
+      (_url: unknown, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 50);
+    await expect(
+      sidecarFetch("/health", { signal: controller.signal }),
+    ).rejects.toSatisfy(
+      (e) => e instanceof DOMException && (e as DOMException).name === "AbortError",
+    );
   });
 });

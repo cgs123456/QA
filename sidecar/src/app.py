@@ -16,12 +16,16 @@ from routers.store import router as store_router
 VERSION = "0.1.0"
 CAPABILITIES = ["health", "qa"]
 
+# 启动 nonce：main.py 每次启动生成，/health 回显，wait_for_health 校验。
+# 防 TOCTOU：端口复用竞态下占位者无法伪造 nonce，本进程只认自己的 server。
+HEALTH_NONCE: str | None = None
+
 app = FastAPI(title="InterviewCopilot sidecar")
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "version": VERSION}
+    return {"status": "ok", "version": VERSION, "nonce": HEALTH_NONCE}
 
 
 @app.get("/sidecar/info", dependencies=[Depends(verify_token)])
@@ -35,14 +39,3 @@ app.include_router(store_router, dependencies=[Depends(verify_token)])
 app.include_router(settings_router, dependencies=[Depends(verify_token)])
 app.include_router(qa_router, dependencies=[Depends(verify_token)])
 app.include_router(model_router, dependencies=[Depends(verify_token)])
-
-
-@app.get("/health")
-def health() -> dict:
-    return {"status": "ok", "version": VERSION}
-
-
-@app.get("/sidecar/info", dependencies=[Depends(verify_token)])
-def sidecar_info() -> dict:
-    """Minimal authenticated route (auth closed-loop proof, task-2)."""
-    return {"version": VERSION, "capabilities": CAPABILITIES}

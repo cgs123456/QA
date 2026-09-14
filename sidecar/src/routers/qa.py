@@ -94,6 +94,16 @@ async def _cancel_task(task_id: str) -> None:
         task.bg.cancel()
 
 
+async def _sweep_tasks() -> None:
+    """清过期 task（TTL 后清理的实在约束——只靠 GET 触发会漏掉永不来读的 ask）。
+    入口（ask/stream）处调用，上限定为 60s 窗口内的 task 量级。"""
+    now = time.monotonic()
+    async with TASKS_LOCK:
+        expired = [tid for tid, t in TASKS.items() if (now - t.created) > TASK_TTL_S]
+    for tid in expired:
+        await _cancel_task(tid)
+
+
 async def _run_task(task_id: str) -> None:
     async with TASKS_LOCK:
         task = TASKS.get(task_id)
@@ -155,6 +165,10 @@ async def _run_task(task_id: str) -> None:
     except asyncio.CancelledError:
         raise
     except Exception as e:  # 后台绝不崩 worker：转 error 事件。
+        # 堆栈打到 stderr（Rust 侧落盘，降级页可查）；客户端只见种类名。
+        import traceback as _traceback
+
+        _traceback.print_exc()
         await task.queue.put({"type": "done", "result": {
             "type": "error", "text": "答案生成失败，请稍后重试。",
             "error": f"internal:{type(e).__name__}",
@@ -181,6 +195,7 @@ async def qa_ask(body: AskBody):
             raise HTTPException(status_code=400, detail="无当前知识库")
     task_id = secrets.token_urlsafe(16)
     task = _Task(question, store_id, body.provider)
+    await _sweep_tasks()
     async with TASKS_LOCK:
         TASKS[task_id] = task
     task.bg = asyncio.create_task(_run_task(task_id))
@@ -214,7 +229,8 @@ async def _event_gen(task_id: str, request: Request):
 
 @router.get("/qa/stream")
 async def qa_stream(task_id: str, request: Request):
-    """request 预留：后续可按 request.is_disconnected() 主动轮询断开。"""
+    """request 用于 _event_gen 的 is_disconnected 轮询（真断开感知）。"""
+    await _sweep_tasks()
     async with TASKS_LOCK:
         task = TASKS.get(task_id)
     if task is None:

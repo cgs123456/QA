@@ -12,4 +12,7 @@ def test_health_returns_ok():
     client = TestClient(app)
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "version": VERSION}
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["version"] == VERSION
+    assert "nonce" in body  # 启动 nonce（TOCTOU 防冒名），未启动时为 None

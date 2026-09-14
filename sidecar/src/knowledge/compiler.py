@@ -8,6 +8,7 @@
 import json
 import uuid
 
+from database.connection import write_lock
 from .stores import get_store, log_event
 
 
@@ -55,7 +56,7 @@ def compile_store(
     if stats_extra:
         stats.update(stats_extra)
 
-    with conn:  # 唯一短事务：qa + fields + aliases（+ vec 预留位）
+    with write_lock, conn:  # 写串行（R3）之下的唯一短事务：qa + fields + aliases（+ vec）
         emb = dict(embeddings) if embeddings else {}
         taken_ids = {
             r[0] for r in conn.execute("SELECT id FROM qa_pairs").fetchall()

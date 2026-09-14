@@ -9,7 +9,8 @@ jieba_dict(绝对路径) → load sqlite-vec。
 vendor/dict 与 DB 默认路径都由 BASE 导出为绝对路径，永不依赖 CWD。
 
 并发：单连接（R3）。sqlite3 连接以 check_same_thread=False 创建，
-写操作必须持有 write_lock 串行化；读（SELECT）可并发。
+写操作必须持有 write_lock 串行化；读（SELECT）可并发（WAL 下读不被写阻塞）。
+RLock：防未来嵌套调用自死锁。
 """
 
 import os
@@ -28,7 +29,7 @@ REQUIRED_DICT_FILES = [
     "stop_words.utf8",
 ]
 
-write_lock = threading.Lock()
+write_lock = threading.RLock()
 
 _singleton = None
 _singleton_lock = threading.Lock()

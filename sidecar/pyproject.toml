@@ -1,7 +1,7 @@
 [project]
 name = "interview-copilot-sidecar"
 version = "0.1.0"
-description = "InterviewCopilot Python sidecar (health + Bearer auth; task-2)"
+description = "InterviewCopilot Python sidecar (local-first RAG + answers)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
