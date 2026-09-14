@@ -70,6 +70,11 @@ PRD 只定义 POST 触发；进度轮询约定如下：`status ∈ queued/downlo
 音频/事件统一编号，跳号计数 + 重同步）；`segment_id` 由 sidecar 按连接分配
 （`seg_{n}`）；同 path 重复 start 则旧段 interrupted（asr_error）。
 
+Rust 生产端（1b-3 落地）：`audio::frame::encode_ws_frame(seq, ts_ms, &pcm_f32)` 直出上述
+1927B；`seq` 每帧自增（内部 u32，线上按契约截断为 u16 回绕），`ts_ms` = 帧序号 × 30
+（**样本计数派生，非挂钟**）。采集侧 `audio::loopback::CapturePipeline` 已保证 seq/ts
+单调、样本守恒，且设备切换只换 resampler、不重启序号空间。
+
 ### 下行消息（sidecar → Rust/前端，同连接 JSON，R12）
 
 `asr_start / asr_partial（本阶段不发，整段转写）/ asr_final / asr_error`，

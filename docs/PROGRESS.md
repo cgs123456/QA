@@ -1,11 +1,39 @@
 # PROGRESS.md — InterviewCopilot
 
 ## 已完成
+- 1b-3 Rust 双路采集（2026-09-14）：`audio/` 八模块落地，三路来源（Windows WASAPI
+  loopback / 全平台 cpal mic / Linux cpal monitor）共用一条采集管线与一个 trait。
+  接手时是半成品且不可编译（17 个错误），本次修/建的实情：
+  ① `loopback.rs` 用 `SyncSender` 实现"满则丢弃最旧"——**不可能**：生产端无法驱逐队首，
+     `try_send` 只能拒最新，不满足 R13 字面。改为自建 `DropOldestQueue<T>`（有界 +
+     丢弃最旧 + 计数 + 毒化容忍），帧与事件两条通道同一策略；测试锁定"10 万次推入
+     2 槽队列立即返回"。
+  ② `resample.rs` 的 rubato 5 导入路径/适配器 API 全错（`InterleavedSliceMut`、
+     `rubato::audioadapter::Indexing` 不存在）→ 改为 `InterleavedSlice::new/new_mut`
+     （同一类型两种构造）+ `rubato::Indexing`；新增 `downmix_interleaved_f32_to_mono`
+     与 `decode_interleaved_f32_le_to_mono`（wasapi 热路径，单遍不落中间缓冲）。
+  ③ `wasapi_loopback.rs` 半成品无法编译（`downmix_stereo_to_mono` 重复定义、调用未定义
+     函数、误用不存在的 `crate::audio::loopback::stopped`、引用未声明的 `windows` crate、
+     `AudioClient::new` 不存在）→ 按 wasapi 0.24 真实 API 重写。
+  落地裁定（PRD 未细化处）：
+  ① **原生格式读取而非假设**（PRD §3.5 坑）：wasapi 从 `Device::get_device_format()`
+     取 rate/channels，只强制 f32 容器 + `autoconvert`，把重采样留给 rubato；
+     cpal 走 `default_input_config()` 失败再退到 supported range（monitor 常无默认）。
+  ② **回调永不阻塞**：cpal 数据回调只做 downmix + 入队（`DropOldestQueue`），
+     resampler 与帧队列由独立 pump 线程持有；`cpal::Stream` 是 `!Send`，全程不跨线程。
+  ③ **ts 由样本计数派生**（`frames*30ms`），seq 每帧自增 → 10 分钟漂移是构造性质
+     而非测量结果；设备切换时 `set_input_rate` 只换 resampler，seq/ts 保持单调。
+  ④ **设备变更**：wasapi 注册 `IMMNotificationClient` 默认渲染回调，回调只置原子标志
+     （规范要求不得回调 enumerator），采集线程察觉后重建流并发 `DeviceChanged`/`StreamRebuilt`。
+  ⑤ **两套错误机制**：启动失败经一次性 channel 同步返回给 `start()`（降级页可立刻渲染
+     真实原因）；会话中途失败退避重试，5 连败才上报为错误事件。
+  ⑥ 平台矩阵与 R12 对齐：Windows=loopback+mic、Linux=monitor+mic、macOS=mic-only，
+     路径标签 `mic`/`loopback` 已按契约固定。
 - 工具链（2026-09-14）：MSVC Build Tools 2022（17.14，MSVC 14.44 + Win11SDK 26100）+
   rustc/cargo 1.98.1 stable-msvc + cargo-audit 0.22.2；`cargo test` 9/9、`clippy` 零警告、
   `audit` 默认通过（576 crates，0 漏洞，9 允许警告）；`src-tauri/Cargo.lock` 入仓。
   Rust 历史欠账清零（test/clippy/audit/lock 全本地可跑）。
-- 1b-1 Python WS 音频协议（2026-09-14）：见“当前”；落地裁定：一连接一路（首 segment_start
+- 1b-1 Python WS 音频协议（2026-09-14，`c08ab44`）：落地裁定：一连接一路（首 segment_start
   确立强制）、seq 全帧共享序号空间、sidecar 分配 `seg_{n}`、重复 start 顶掉旧段、有界
   （待转写≤8/单段≤32MB/接收永不 await/发送锁+5s 超时）。
 - task-10 收尾（2026-09-14）：模型下载进度通道（POST id + GET 轮询，落地裁定写回 api-contract.md）+
@@ -55,23 +83,52 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- Phase 1b 开工：R9–R14 已接受；1b-1（Python WS 音频协议）完工待提交：
-  `asr/provider.py`（整段转写抽象 + Stub/故障注入替身）+ `routers/audio.py`
-  （Header 鉴权/1008 + R10 帧解析 + 分段缓冲 + R12 下行 + R13 有界 + R14 零打印）+
-  `tests/test_audio_protocol.py` 13/13 全绿；契约 WS 节写回 api-contract.md。
-  全量：pytest 121 + cargo test 9 + vitest 10 + Playwright 1（前端本轮未动，既往绿有效）。
+- Phase 1b 进行中：R9–R14 已接受；1b-1（Python WS 音频协议）已提交（`c08ab44`）。
+  **1b-3（Rust 双路采集到"可发送帧"）完工待提交**：`src-tauri/src/audio/` 八个模块
+  （`frame` / `loopback` / `resample` / `cpal_common` / `cpal_mic` / `cpal_monitor` /
+  `wasapi_loopback` / `mod`）——Windows loopback + 全平台 mic + Linux monitor 三路
+  统一到 `LoopbackSource` trait 与同一条 `CapturePipeline`（原生率/声道 → downmix 单声道
+  → rubato 16k → 480 帧 → int16(VAD) + float32(WS) 双输出）。
+  全量：cargo test **35** + 集成 **1**（设备无关 WAV 往返与内容校验）+ clippy 零警告 +
+  音频模块 rustfmt clean。
+  下一项：1b-2（whisper 实转写）与 WS 上行接线（把 `Frame16k` 经 `encode_ws_frame`
+  推给 sidecar `/audio/stream`）。
 
 ## 待人工验证
-- 需 Rust + MSVC Build Tools 机器：`cargo test`（protocol 3 例 + degradation 3 例 + manager 2 例）通过；`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
+- 1b-3 真机音频（需有声卡的 Windows 机器 + 人耳；本次按用户指示未跑）：
+  ① `cargo run --release --example record_loopback -- 10 out.wav`——**先播放音乐再运行**，
+     然后听 `out.wav` 确认内容正确。脚本自身已校验帧数/seq 连续/ts 派生/WAV 长度/
+     int16↔float32 等长/丢弃计数，并在整段静音时明说"这只证明了链路、没证明内容"。
+  ② 播放中切换默认渲染设备（插拔耳机/切输出）→ 事件应出现 `DeviceChanged` +
+     `StreamRebuilt`，且 seq/ts 不重启（`set_input_rate` 只换 resampler）。
+  ③ Linux monitor（PulseAudio）与 macOS mic-only 未在本机（Windows）验证，
+     需对应平台各跑一次 `cargo test`。
+- 需 Rust + MSVC Build Tools 机器：`cargo test` 现本机可跑且全绿（35+1，见下），
+  余项为壳验证：`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志
+  可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
 - task-2 人工 DoD（有工具链机器）：① 手动 kill sidecar 的 python 进程 → 日志可见 `restart 1/3 in 1s`… 最多 3 次并恢复 health（计数在 health 恢复后清零）；② 连续 kill 致 4 连败 → 前端降级页（reason=restart_exhausted）+ 事件 sidecar://degraded；③ 伪造 protocol_version（如改 main.py PROTOCOL_VERSION="9.9"）→ 降级页 reason=version_mismatch；④ 应用退出后 tasklist 无残留 python sidecar 进程
 - Python 为 3.13.14（本机可用版本），PRD 要求 3.11——后续 CI/打包时需按 3.11 锁定验证
 
 ## 实测数字档案
+- 1b-3（2026-09-14，Windows/MSVC + rustc 1.98.1）：`cargo test` **35 passed**（audio 26：
+  loopback 9 / resample 6 / frame 4 / cpal_common 3 / cpal_mic 2 / wasapi 2；其余 9 为
+  既有 sidecar protocol/degradation/manager/security）+ 集成测试 `audio_frames_wav`
+  **1 passed**（5 s 48k 正弦 → 真管线 → WAV 落盘回读：样本数与内容逐字节一致、
+  Goertzel 440Hz 比邻频强 >8×、int16 与 float32 等长、样本守恒 ≤1 帧）。
+  `cargo clippy --all-targets` 代码告警 **0**（仅剩 target 增量目录 GC 的环境提示）、
+  `rustfmt --check`（音频模块 + 新增 example/test）clean。
+  记账：`cargo fmt` 顺带暴露出 3 个既有文件的 fmt 漂移（`security/keychain.rs`、
+  `sidecar/degradation.rs`、`sidecar/manager.rs`，均为换行重排、无语义变化），
+  已刻意回退未动，避免把无关重排混进本任务提交——留给后续任务或统一 fmt 时处理。
+  rubato 结构参数实测：48k→16k 每帧需 1440 输入样本
+  （in 1440 / out 480），内部延迟 240 输出帧（常量，不累积）；10 分钟 600 次推入
+  16k 输入恰得 **20000 帧**、末帧 ts 599970ms 对 600000ms 偏差 **30ms**（<50ms 预算，
+  且是帧量化而非漂移）。
 - sidecar 独立 DoD（verify-sidecar.py）：HANDSHAKE_JSON_OK（protocol_version 1.0、port int、auth_token str≥32、capabilities/models_loaded list；token 已打码不落盘）；HEALTH_STATUS=200 BODY={"status":"ok","version":"0.1.0"}；结论 SIDECAR_STANDALONE_DOD_PASS（2026-09-14）
 - pytest sidecar/tests：1 passed（test_health_returns_ok），pytest 9.1.1 / fastapi 0.141.1 / uvicorn 0.52.4
 - 前端：pnpm install 成功（react 19.3.0、@tauri-apps/api 2.11.1、cli 2.11.4、vite 8.3.0）；`npx tsc --noEmit` 无输出通过；`pnpm build` 成功（dist/index.html 0.48kB）
-- protocol 逻辑等价验证（Python 镜像，cargo 本机不可用）：valid-ok / invalid-json-rejected-ok / version-mismatch-rejected-ok
-- 未跑：cargo test、pnpm tauri dev（本机无 cargo/rustc/link；原因如实记录，非跳过）
+- protocol 逻辑等价验证（Python 镜像，当时本机不可用 cargo）：valid-ok / invalid-json-rejected-ok / version-mismatch-rejected-ok —— **已作废**：工具链装好后 cargo test 本机可跑（见 1b-3 数字）
+- 未跑：pnpm tauri dev 壳（需 `<python>` 环境变量，步骤见"待人工验证"）；1b-3 真机 10s 采集/回听（按用户指示跳过，原因如实记录）
 - task-2 鉴权真机（verify-auth.py，2026-09-14）：HEALTH_NO_TOKEN=200；INFO_NO_TOKEN=401；INFO_WRONG_TOKEN=401；INFO_WITH_TOKEN=200 → AUTH_DOD_PASS
 - task-2 pytest：6 passed（test_health 1 + test_auth 5：无token/错token/畸形头→401，对token→200 且 401 体不含 token）
 - task-2 前端：`npx tsc --noEmit` 通过（exit 0）；`pnpm build` 成功（21 modules，dist/assets/index-74NERvRi.js 223.03kB）
