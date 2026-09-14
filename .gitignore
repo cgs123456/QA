@@ -1,0 +1,49 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/schemas
+
+# Python sidecar
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# PRD §3.13 vendor binaries + dict: never commit, fetch via scripts/fetch-vendor.py
+sidecar/vendor/*.dll
+sidecar/vendor/*.so
+sidecar/vendor/*.dylib
+sidecar/vendor/dict/*
+!sidecar/vendor/dict/.gitkeep
+
+# Local runtime
+*.db
+*.db-wal
+*.db-shm
+dist/
