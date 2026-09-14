@@ -8,7 +8,8 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- task-2 已完工待提交；本机已跑验收（见实测数字档案）；Rust 编译/运行验收转人工（本机无 Rust/MSVC，见待人工验证）
+- task-3 P0 冒烟 **PASS（2026-09-14），P0 关闭**：vendor 由我从上游取数落盘
+  （simple v0.7.1 windows-x64，SHA256 已验）；五步全绿，全量 pytest 11 passed。
 
 ## 待人工验证
 - 需 Rust + MSVC Build Tools 机器：`cargo test`（protocol 3 例 + degradation 3 例 + manager 2 例）通过；`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
@@ -25,3 +26,13 @@
 - task-2 pytest：6 passed（test_health 1 + test_auth 5：无token/错token/畸形头→401，对token→200 且 401 体不含 token）
 - task-2 前端：`npx tsc --noEmit` 通过（exit 0）；`pnpm build` 成功（21 modules，dist/assets/index-74NERvRi.js 223.03kB）
 - task-2 Rust：degradation/manager 单测已写 8 例（degradation 3：mismatch 触发事件/合法无emit/非法JSON无emit；manager 2：退避表/ mismatch 判别；protocol 3 沿用）——本机无工具链，待人工 `cargo test`；R8 复核：token 仅出现在内存结构/IPC 与测试占位值，无日志/事件/错误串泄漏
+- task-3 P0 冒烟（2026-09-14）：初版测试按诊断纪律停于前置缺失（vendor 空）；
+  用户授权后我从上游取数：simple v0.7.1 `libsimple-windows-x64.zip`
+ （5,473,005 bytes，sha256 `7f03cc28…bed0b` 实测一致）→ `libsimple.dll`（1.5MB）+ dict 五文件落盘
+  （gitignored，本地专用；三件套之外另需 idf.utf8/stop_words.utf8——见下）。
+  中途实测关键发现：缺 `idf.utf8` 时 `jieba_query` 触发扩展内 `abort()`（`KeywordExtractor.hpp:97`），
+  进程直接 `Fatal Python error: Aborted`（不可捕获）；补齐后五步全绿。
+  计时：load 0.9ms / jieba_dict ~0ms（懒加载）/ 建表 0.3ms / 插入 44.6ms /
+  jieba_query 首查 511.8ms / simple_query 热查 0.1ms；sqlite_version=3.53.1。
+  全量 pytest：**11 passed**。报告见 `docs/compatibility.md`（PASS）。
+  后续待办：sidecar 启动自检必须先验 dict 完整性（abort 不可捕获，重启循环救不了缺文件）。

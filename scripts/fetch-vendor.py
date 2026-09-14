@@ -1,26 +1,17 @@
 """Fetch vendor binaries (libsimple + cppjieba dict) — records source & version.
 
-This skeleton task does NOT vendor binaries (see .gitignore).
-Real fetch (Phase 1a D3) must fill in exact URLs + SHA256 and download:
-
-- libsimple: https://github.com/wangfenjin/simple
-  - Windows: vendor/libsimple.dll (~1-2MB)
-  - Linux:   vendor/libsimple.so
-  - macOS:   vendor/libsimple.dylib
-- cppjieba dict (vendor/dict/):
-  - jieba.dict.utf8  (main dict, MPSegment)
-  - hmm_model.utf8   (HMM model, MixSegment required)
-  - user.dict.utf8   (user dict)
-
-After fetch, verify per PRD §3.13:
-  1. dict/ three required files exist (PyInstaller silently packs empty dirs)
-  2. SELECT jieba_dict('<abs vendor/dict/>') succeeds
-  3. smoke test inserts data BEFORE MATCH/rebuild (empty-table test is false-green)
-  4. load_extension() + jieba_dict() use ABSOLUTE paths anchored at
-     sys._MEIPASS / executable dir (packaged) or project root (dev, env-overridable)
-
-Usage (not yet implemented — placeholder):
-    python scripts/fetch-vendor.py --platform windows --out sidecar/vendor
+Verified recipe (task-3, 2026-09-14, Windows x64):
+- release: wangfenjin/simple v0.7.1 (2026-02-23, Latest)
+- asset: libsimple-windows-x64.zip (5,473,005 bytes)
+  URL: https://github.com/wangfenjin/simple/releases/download/v0.7.1/libsimple-windows-x64.zip
+  sha256: 7f03cc28cf307721f5621b5a52ef3bcb26c5215de012b09900492eb34d5bed0b
+- layout inside zip: libsimple-windows-x64/simple.dll + dict/...
+- place: simple.dll → sidecar/vendor/libsimple.dll (rename; load by path);
+  dict/{jieba.dict.utf8,hmm_model.utf8,user.dict.utf8,idf.utf8,stop_words.utf8}
+  → sidecar/vendor/dict/ (idf.utf8 REQUIRED: jieba_query aborts the process
+  without it — see docs/compatibility.md).
+- dicts are CppJieba dicts (per dict/README.md in the zip); pinyin data
+  updated in v0.7.1 (#202).
 """
 
 SOURCES = {
