@@ -52,5 +52,36 @@ PRD 只定义 POST 触发；进度轮询约定如下：`status ∈ queued/downlo
 
 ## WS（Phase 1b，预留未实现）
 
-`WS /audio/stream`（Authorization Header 鉴权，无 token → code=1008）。
-本阶段无实现，契约见 PRD §3.4。
+## WS（Phase 1b，`WS /audio/stream`）
+
+鉴权（R9）：`Authorization: Bearer <token>` Header（accept 之前校验），
+缺失/错误 → close code=1008。禁止 URL query 传 token。
+
+### 上行帧（Rust → sidecar，二进制，R10）
+
+帧头 `[1B type][2B seq_le][4B timestamp_ms_le]`：
+- `type=0x00` 音频：负载 float32 LE ×480 samples（1920B），归一化 [-1,1]，
+  整帧 7+1920=1927B；长度不对 → 忽略 + 计数。
+- `type=0x01` 事件：负载 UTF-8 JSON（`segment_start`/`segment_end`/`vad_state`，
+  格式见 PRD §3.5，path 须为 loopback|mic）。
+
+落地裁定（线格式不变）：**一连接承载一路**，path 由本连接首个 `segment_start`
+确立并强制（冲突忽略 + 计数）；**seq 全帧共享一序号空间**（每路独立计数，
+音频/事件统一编号，跳号计数 + 重同步）；`segment_id` 由 sidecar 按连接分配
+（`seg_{n}`）；同 path 重复 start 则旧段 interrupted（asr_error）。
+
+### 下行消息（sidecar → Rust/前端，同连接 JSON，R12）
+
+`asr_start / asr_partial（本阶段不发，整段转写）/ asr_final / asr_error`，
+必含 `segment_id` / `path` / `ts_ms`；final 另含 `text` + `duration_ms`
+（起止取事件时间戳，非挂钟）；error 的 `error` 取值：
+`provider_timeout|provider_error|all_providers_failed`（ provider 故障）、
+`no_provider`（未配置 ASR）、`interrupted`（同 path 重复 start 顶掉旧段）、
+`dropped_overload`（见下）。
+
+### 背压与日志（R13/R14）
+
+- 有界：每连接待转写 ≤8（超则本段丢弃 + `dropped_overload` + 计数）；
+  单段缓冲 ≤32MB（超则自动封段转写部分）；接收循环永不 await 转写
+  （fire-and-forget + 完成计数）；下行发送串行锁 + 5s 超时，超时/断开即清理。
+- content-free：音频模块零打印；转写文本只进下行 JSON（单测以 capsys 锁定）。

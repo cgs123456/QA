@@ -1,6 +1,13 @@
 # PROGRESS.md — InterviewCopilot
 
 ## 已完成
+- 工具链（2026-09-14）：MSVC Build Tools 2022（17.14，MSVC 14.44 + Win11SDK 26100）+
+  rustc/cargo 1.98.1 stable-msvc + cargo-audit 0.22.2；`cargo test` 9/9、`clippy` 零警告、
+  `audit` 默认通过（576 crates，0 漏洞，9 允许警告）；`src-tauri/Cargo.lock` 入仓。
+  Rust 历史欠账清零（test/clippy/audit/lock 全本地可跑）。
+- 1b-1 Python WS 音频协议（2026-09-14）：见“当前”；落地裁定：一连接一路（首 segment_start
+  确立强制）、seq 全帧共享序号空间、sidecar 分配 `seg_{n}`、重复 start 顶掉旧段、有界
+  （待转写≤8/单段≤32MB/接收永不 await/发送锁+5s 超时）。
 - task-10 收尾（2026-09-14）：模型下载进度通道（POST id + GET 轮询，落地裁定写回 api-contract.md）+
   Settings 页（Provider 选择持久化/API Key→keyring/模型下载进度）+ Degraded 完整版
   （stderr 落盘 + sidecar_log_tail + 重试打通）+ 锁文件（requirements-lock 42 pins/clean-venv 复现，
@@ -48,13 +55,11 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- 工具链就绪（2026-09-14）：MSVC Build Tools 2022（17.14，MSVC 14.44 + Win11SDK 26100，
-  quiet 安装一次成功）+ rustc/cargo 1.98.1 stable-msvc；`cargo test` 9/9 绿（全依赖树编译通过，
-  含 tauri/reqwest/keyring/tokio）；`cargo clippy --all-targets` 零警告；`cargo audit` 默认通过
-  （576 crates，0 漏洞，9 允许警告：derivative/instant/proc-macro-error/unic-*/glib 等传递依赖
-  的 unmaintained/unsound，无修复动作）；`src-tauri/Cargo.lock` 已入仓。
-  Rust 历史欠账清零：cargo test/clippy/audit/lock 全部本地可跑；待办仅剩 Ollama e2e 与壳目检。
-- Phase 1b 开工：R9–R14 已接受（见下节）；首任务 1b-1（Python WS 音频协议）进行中。
+- Phase 1b 开工：R9–R14 已接受；1b-1（Python WS 音频协议）完工待提交：
+  `asr/provider.py`（整段转写抽象 + Stub/故障注入替身）+ `routers/audio.py`
+  （Header 鉴权/1008 + R10 帧解析 + 分段缓冲 + R12 下行 + R13 有界 + R14 零打印）+
+  `tests/test_audio_protocol.py` 13/13 全绿；契约 WS 节写回 api-contract.md。
+  全量：pytest 121 + cargo test 9 + vitest 10 + Playwright 1（前端本轮未动，既往绿有效）。
 
 ## 待人工验证
 - 需 Rust + MSVC Build Tools 机器：`cargo test`（protocol 3 例 + degradation 3 例 + manager 2 例）通过；`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
