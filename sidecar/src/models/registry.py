@@ -57,7 +57,12 @@ MODEL_REGISTRY = {
 
 
 def default_model_dir(name: str):
-    """本地存放目录：BASE/models/<name>（与 vendor 同级，gitignored）。"""
-    from database.connection import resolve_base
+    """本地存放目录：开发态 BASE/models/<name>；打包态用户数据目录
+    （与 DB 同理：可写数据绝不进 bundle）。"""
+    import sys as _sys
 
+    from database.connection import _user_data_dir, resolve_base
+
+    if getattr(_sys, "frozen", False):
+        return _user_data_dir() / "models" / name
     return resolve_base() / "models" / name

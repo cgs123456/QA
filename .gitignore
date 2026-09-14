@@ -53,5 +53,7 @@ sidecar/models/*
 *.db-wal
 *.db-shm
 dist/
+dist-sidecar/
 build/
+build-sidecar/
 *.spec

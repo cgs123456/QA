@@ -1,6 +1,11 @@
 # PROGRESS.md — InterviewCopilot
 
 ## 已完成
+- task-10 收尾（2026-09-14）：模型下载进度通道（POST id + GET 轮询，落地裁定写回 api-contract.md）+
+  Settings 页（Provider 选择持久化/API Key→keyring/模型下载进度）+ Degraded 完整版
+  （stderr 落盘 + sidecar_log_tail + 重试打通）+ 锁文件（requirements-lock 42 pins/clean-venv 复现，
+  pnpm-lock 在仓；Cargo.lock 待工具链）+ docs/models.md/api-contract.md +
+  eslint（0 warning）+ CI 五 job + 体积回归脚本；附带修包自污染 bug（DB 写进 bundle）。
 - task-9 可见面（2026-09-14）：lib/api.ts 完整（REST+SSE+token 注入+401/网络/超时错误分类）+
   lib/sse.ts（纯帧解析 + 来源标签）+ zustand stores（app/knowledge）+ TanStack Query hooks
   （useStore CRUD/compile + useQA 两段式流式可取消）+ Search 页（命中标签 + 答案三态卡）+
@@ -43,7 +48,7 @@
 - task-2 生命周期+鉴权：sidecar core/auth.py（verify_token 依赖注入，secrets.compare_digest，缺失/错误→401，token 仅内存）；除 /health 外全部路由挂载（新增 GET /sidecar/info 作鉴权闭环证明路由）；main.py 启动时 init_token；Rust supervise（1s health 轮询、崩溃检测、退避 1s/2s/4s max_restarts=3、health 恢复清零计数、版本不匹配→sidecar://degraded 事件 version_mismatch、无任何握手失败残留孤儿、RunEvent::Exit taskkill /T /F 清理进程树）；前端 src/lib/api.ts（invoke 拿 port/token + fetch 自动带头）+ src/pages/Degraded.tsx 占位降级页（原因+查看日志+重试）；commands 新增 get_sidecar_credentials/get_sidecar_degraded/retry_sidecar_start
 
 ## 当前
-- task-9 已完工待提交；机器可跑项全绿（见下）；UI 点击走查转人工（需 Tauri 壳）。
+- task-10 已完工待提交；机器可跑项全绿（见下）；转人工：连续 kill×4 降级页+重试、Rust 编译链。
 
 ## 待人工验证
 - 需 Rust + MSVC Build Tools 机器：`cargo test`（protocol 3 例 + degradation 3 例 + manager 2 例）通过；`$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
@@ -129,3 +134,19 @@
   ④ 手动查找页问「公司成立时间」→固定答案卡 + 字段直查标签；⑤ 问无匹配串→知识库未命中卡；
   ⑥ 建第二库导其他内容→切换当前库→同问指向新库（命中变化）；⑦ 删除库→列表消失（级联）。
   不做项（本次未碰）：视觉打磨、暗色主题、Rehearsal 页。
+- task-10（2026-09-14）：pytest **104 passed**（dev）且隔离 venv **103 passed**（回滚 1 例初败后定位修复，
+  见下）+ vitest 9 + Playwright 1 + eslint 0 + tsc 0 + build 成功 + check_size PASS + CI YAML 合法（5 job）。
+  DoD：① 模型下载通道 5 单测 + **断网续传 e2e**（95MB 真字节首传 2MB 断开→同镜像 Range 续传→SHA，
+  附带修真 bug：传输截断 read() 静默 b"" 无异常，靠长度裁决转重试）；② kill×4 降级+重试转人工
+  （需壳；Rust supervise 逻辑未变：4 连败→restart_exhausted 事件→降级页→重试按钮调 retry_sidecar_start）；
+  ③ CI 本地验证：pytest/vitest/eslint/tsc/build/check_size 全过，clippy/tauri-build 为 CI-only（无工具链）。
+  锁文件：requirements-lock.txt 42 pins（clean venv freeze；隔离 venv 全绿复现）+ pnpm-lock 在仓；
+  Cargo.lock 待首个 cargo build 生成后入仓（无工具链）；models.md（bge/libsimple/vec）+ api-contract.md 落盘。
+  包自污染 bug（已修）：DB 默认路径曾落 `_internal/`，每次启动 +230KB 且只读安装即崩；
+  现打包态走用户数据目录（单测锁定不在 bundle 内），两次 verify 总字节完全一致；
+  基线重定 BUNDLE_BYTES=200060425（190.8 MiB，增量 ≈145MB 均为 task-6/7 已立项 embedding 栈）。
+  附带修：dist/ 与 sidecar 产物目录冲突（vite 构建清空 dist 误删过 sidecar 包）→ dist-sidecar/ 分离。
+  回滚初败根因（记账精度）：Windows TerminateProcess 后句柄释放竞态，父进程立即重连 WAL 报 disk I/O error——
+  测试加退避重连吸收（数据断言未放宽）；顺带证明 kill 确实命中事务窗口。
+  待人工：① 连续 kill×4→降级页出现→点重试恢复（`pnpm tauri dev` 后 tasklist 找 python sidecar 进程 kill）；
+  ② Rust 全链：`cargo test` + build（产 Cargo.lock）+ `cargo audit`；③ Ollama e2e（task-7 遗留）。

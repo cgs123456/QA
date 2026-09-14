@@ -23,8 +23,9 @@ VENDOR = ROOT / "sidecar" / "vendor"
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--distpath", default=str(ROOT / "dist"))
-    ap.add_argument("--workpath", default=str(ROOT / "build"))
+    # 注意：前端 vite 产物占用 dist/（且构建会清空它），sidecar 独占 dist-sidecar/。
+    ap.add_argument("--distpath", default=str(ROOT / "dist-sidecar"))
+    ap.add_argument("--workpath", default=str(ROOT / "build-sidecar"))
     args = ap.parse_args()
 
     lib_names = {

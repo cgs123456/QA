@@ -53,7 +53,19 @@ def test_sigkill_mid_compile_rolls_back(tmp_path):
     assert ret != 0, "victim 竟正常退出——kill 未命中，测试无效"
     assert "Traceback" not in err_text, f"victim 自行崩溃而非被 kill：{err_text[-500:]}"
 
-    conn = connect(str(db_path))
+    # Windows 上 TerminateProcess 后文件句柄释放有竞态：带退避重连，
+    # 只等“可打开”，不断言任何数据（数据断言在后）。
+    conn = None
+    deadline = time.time() + 15.0
+    last_error = None
+    while time.time() < deadline:
+        try:
+            conn = connect(str(db_path))
+            break
+        except Exception as e:  # noqa: BLE001
+            last_error = e
+            time.sleep(0.1)
+    assert conn is not None, f"kill 后 DB 始终打不开：{last_error}"
     try:
         qa_count = conn.execute("SELECT COUNT(*) FROM qa_pairs").fetchone()[0]
         vec_count = conn.execute("SELECT COUNT(*) FROM vec_qa_local").fetchone()[0]

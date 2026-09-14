@@ -41,3 +41,18 @@ def test_default_db_path_env_override(tmp_path, monkeypatch):
 
 def test_default_db_path_dev_under_base():
     assert default_db_path() == resolve_base() / "data" / "interviewcopilot.db"
+
+
+def test_default_db_path_frozen_outside_bundle(tmp_path, monkeypatch):
+    """打包态 DB 进用户数据目录，绝不进 bundle（曾污染体积基线 + 只读安装即崩）。"""
+    import sys as _sys
+
+    fake_meipass = tmp_path / "_internal"
+    fake_meipass.mkdir()
+    monkeypatch.setattr(_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(_sys, "_MEIPASS", str(fake_meipass), raising=False)
+    monkeypatch.delenv("INTERVIEWCOPILOT_DB", raising=False)
+    db = default_db_path()
+    assert db.name == "interviewcopilot.db"
+    assert fake_meipass not in db.parents
+    assert "copilot" in db.parts[-3].lower()  # …/InterviewCopilot|interviewcopilot/data/…

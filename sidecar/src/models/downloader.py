@@ -43,51 +43,64 @@ def verify_sha256(path: Path, expected: str) -> bool:
 
 
 def _fetch_one(url: str, part: Path, progress=None, timeout: int = 60) -> None:
+    import http.client as _http_client
+
     existing = part.stat().st_size if part.exists() else 0
     req = urllib.request.Request(url, headers={"User-Agent": "InterviewCopilot-sidecar"})
     if existing:
         req.add_header("Range", f"bytes={existing}-")
     try:
         resp = urllib.request.urlopen(req, timeout=timeout)
+        status = resp.status
+        if status == 206 and existing:
+            mode, base, total = "ab", existing, None
+            length = resp.headers.get("Content-Length")
+            total = existing + int(length) if length is not None else None
+        elif status == 200:
+            mode, base, total = "wb", 0, None
+            length = resp.headers.get("Content-Length")
+            total = int(length) if length is not None else None
+            if part.exists():
+                part.unlink()
+        else:
+            raise DownloadError(f"HTTP {status}：{url}")
+
+        downloaded = base
+        if progress:
+            progress(downloaded, total)
+        with open(part, mode) as f:
+            while True:
+                chunk = resp.read(CHUNK)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if progress:
+                    progress(downloaded, total)
+        if total is not None and downloaded != total:
+            # 远端提前断开时 read() 可能静默返回 b""（无 IncompleteRead）——
+            # 以长度裁决截断，转 DownloadError 走同镜像重试续传。
+            raise DownloadError(f"传输截断：{url}（{downloaded}/{total}）")
     except urllib.error.HTTPError as e:
         if e.code == 416 and existing:
             if progress:
                 progress(existing, existing)
             return
         raise DownloadError(f"HTTP {e.code}：{url}") from e
-    except OSError as e:
-        raise DownloadError(f"连接失败：{url}（{e}）") from e
-
-    status = resp.status
-    if status == 206 and existing:
-        mode, base, total = "ab", existing, None
-        length = resp.headers.get("Content-Length")
-        total = existing + int(length) if length is not None else None
-    elif status == 200:
-        mode, base, total = "wb", 0, None
-        length = resp.headers.get("Content-Length")
-        total = int(length) if length is not None else None
-        if part.exists():
-            part.unlink()
-    else:
-        raise DownloadError(f"HTTP {status}：{url}")
-
-    downloaded = base
-    if progress:
-        progress(downloaded, total)
-    with open(part, mode) as f:
-        while True:
-            chunk = resp.read(CHUNK)
-            if not chunk:
-                break
-            f.write(chunk)
-            downloaded += len(chunk)
-            if progress:
-                progress(downloaded, total)
+    except (_http_client.HTTPException, OSError) as e:
+        # 连接中断/远端关闭（含传输中途断网）→ DownloadError，上层重试续传。
+        raise DownloadError(f"连接失败：{url}（{type(e).__name__} {e}）") from e
 
 
-def download_file(urls: list, dest, expected_sha256: str, progress=None) -> Path:
-    """按序尝试镜像，成功返回 dest；全灭抛 AllMirrorsFailed。"""
+def download_file(urls: list, dest, expected_sha256: str, progress=None,
+                  retries: int = 2, backoff_base: float = 1.0) -> Path:
+    """按序尝试镜像，成功返回 dest；全灭抛 AllMirrorsFailed。
+
+    瞬时传输失败（连接中断等 DownloadError）同镜像重试 retries 次
+    （退避 backoff_base/2x…，.part 保留续传）；SHA 不一致换镜像不重试。
+    """
+    import time as _time
+
     dest = Path(dest)
     if not urls:
         raise AllMirrorsFailed("无可用镜像")
@@ -99,16 +112,23 @@ def download_file(urls: list, dest, expected_sha256: str, progress=None) -> Path
     part = dest.with_name(dest.name + ".part")
     last_error: Exception | None = None
     for url in urls:
-        try:
-            _fetch_one(url, part, progress)
-            if verify_sha256(part, expected_sha256):
-                os.replace(part, dest)
-                return dest
-            last_error = ChecksumMismatch(f"SHA256 不一致：{url}")
-        except ChecksumMismatch as e:
-            last_error = e
-        except DownloadError as e:
-            last_error = e
+        for attempt in range(retries + 1):
+            try:
+                _fetch_one(url, part, progress)
+                if verify_sha256(part, expected_sha256):
+                    os.replace(part, dest)
+                    return dest
+                last_error = ChecksumMismatch(f"SHA256 不一致：{url}")
+                break  # 换镜像，不重试同源
+            except ChecksumMismatch as e:
+                last_error = e
+                break  # 换镜像
+            except DownloadError as e:
+                last_error = e
+                if attempt < retries:
+                    _time.sleep(backoff_base * (2 ** attempt))
+                    continue  # 同镜像重试（.part 保留续传）
+                break
         if part.exists():
             part.unlink()
     raise AllMirrorsFailed(f"全部 {len(urls)} 个镜像失败：{last_error}")

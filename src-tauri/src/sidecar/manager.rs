@@ -246,6 +246,59 @@ async fn clear_pid_if(app: &AppHandle, pid: Option<u32>) {
     });
 }
 
+/// Path of the sidecar stderr capture file (temp dir).
+///
+/// Truncated at every spawn (the latest failure is what the degraded page
+/// needs); capped at 1 MiB with truncation. R8: sidecar stderr never carries
+/// the token (handshake goes to stdout; code never prints secrets).
+pub fn sidecar_log_path() -> PathBuf {
+    std::env::temp_dir().join("interviewcopilot-sidecar-stderr.log")
+}
+
+const MAX_LOG_BYTES: u64 = 1024 * 1024;
+
+/// Drain one child stderr into the capture file (detached task, ends on EOF).
+async fn drain_stderr(stderr: tokio::process::ChildStderr) {
+    use tokio::io::AsyncWriteExt;
+    let path = sidecar_log_path();
+    let mut reader = BufReader::new(stderr).lines();
+    while let Ok(Some(line)) = reader.next_line().await {
+        if let Ok(mut f) = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .await
+        {
+            let _ = f.write_all(line.as_bytes()).await;
+            let _ = f.write_all(b"\n").await;
+        }
+        if tokio::fs::metadata(&path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0)
+            > MAX_LOG_BYTES
+        {
+            let _ = tokio::fs::write(&path, "[truncated: 超过 1MB 上限，已清空重记]\n").await;
+        }
+    }
+}
+
+/// Read the last `lines` lines of the sidecar stderr capture (degraded page).
+#[tauri::command]
+pub async fn sidecar_log_tail(lines: u64) -> Result<String, String> {
+    let n = lines.clamp(1, 1000) as usize;
+    match std::fs::read_to_string(sidecar_log_path()) {
+        Ok(content) => {
+            let all: Vec<&str> = content.lines().collect();
+            let start = all.len().saturating_sub(n);
+            Ok(all[start..].join("\n"))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok("(暂无 sidecar 日志)".to_string())
+        }
+        Err(e) => Err(format!("读取日志失败：{e}")),
+    }
+}
 /// Spawn the sidecar and resolve its stdout handshake.
 ///
 /// Pitfalls handled: stdout line must be flushed by the sidecar
@@ -259,9 +312,15 @@ pub async fn spawn_and_handshake(
     let mut child = tokio::process::Command::new(&python)
         .arg(&entry)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| SpawnError::SpawnFailed(format!("{python} {entry:?}: {e}")))?;
+
+    // stderr 落盘（降级页“查看日志”用；最新一次启动覆盖旧日志）。
+    let _ = std::fs::write(sidecar_log_path(), "");
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(drain_stderr(stderr));
+    }
 
     let stdout = match child.stdout.take() {
         Some(s) => s,

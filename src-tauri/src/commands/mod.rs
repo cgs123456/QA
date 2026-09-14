@@ -1,1 +1,3 @@
-//! Tauri IPC commands (placeholder — skeleton only exposes sidecar status).
+//! Tauri IPC commands.
+
+pub mod settings;

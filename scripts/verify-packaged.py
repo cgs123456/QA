@@ -37,7 +37,7 @@ SAMPLE_ZH = "你的发货周期是多久"
 
 
 def default_exe() -> Path:
-    d = ROOT / "dist" / "interviewcopilot-sidecar"
+    d = ROOT / "dist-sidecar" / "interviewcopilot-sidecar"
     name = "interviewcopilot-sidecar" + (".exe" if sys.platform == "win32" else "")
     return d / name
 

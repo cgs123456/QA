@@ -6,6 +6,7 @@ import { SIDECAR_DEGRADED_EVENT } from "./lib/api";
 import { Degraded } from "./pages/Degraded";
 import { Knowledge } from "./pages/Knowledge";
 import { Search } from "./pages/Search";
+import { Settings } from "./pages/Settings";
 
 type SidecarStatus = {
   connected: boolean;
@@ -18,7 +19,7 @@ type DegradedInfo = {
 };
 
 function App() {
-  const [tab, setTab] = useState<"search" | "knowledge">("search");
+  const [tab, setTab] = useState<"search" | "knowledge" | "settings">("search");
   const [status, setStatus] = useState<SidecarStatus | null>(null);
   const [degraded, setDegraded] = useState<DegradedInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +75,7 @@ function App() {
         detail={degraded.detail}
         onRetry={retry}
         retryMessage={retryMessage}
+        onViewLog={() => invoke<string>("sidecar_log_tail", { lines: 200 })}
       />
     );
   }
@@ -99,8 +101,15 @@ function App() {
         >
           知识管理
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("settings")}
+          disabled={tab === "settings"}
+        >
+          设置
+        </button>
       </nav>
-      {tab === "search" ? <Search /> : <Knowledge />}
+      {tab === "search" ? <Search /> : tab === "knowledge" ? <Knowledge /> : <Settings />}
     </main>
   );
 }

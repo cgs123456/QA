@@ -8,9 +8,11 @@ pub mod updater;
 
 use sidecar::manager::{
     get_sidecar_credentials, get_sidecar_degraded, get_sidecar_status, kill_sidecar_tree_blocking,
-    retry_sidecar_start, supervise, SidecarState,
+    retry_sidecar_start, sidecar_log_tail, supervise, SidecarState,
 };
 use tauri::RunEvent;
+
+use crate::commands::settings::save_api_key;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -28,7 +30,9 @@ pub fn run() {
             get_sidecar_status,
             get_sidecar_credentials,
             get_sidecar_degraded,
-            retry_sidecar_start
+            retry_sidecar_start,
+            sidecar_log_tail,
+            save_api_key
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

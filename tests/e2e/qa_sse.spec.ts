@@ -36,9 +36,9 @@ async function api(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
-  let parsed: unknown = null;
+  let parsed: unknown;
   try {
-    parsed = text ? JSON.parse(text) : null;
+    parsed = text ? (JSON.parse(text) as unknown) : null;
   } catch {
     parsed = text;
   }

@@ -43,11 +43,13 @@ def _platform_lib_name() -> str:
 
 
 def resolve_base() -> Path:
-    """资源锚点（绝对路径）：env 覆盖 → 打包态 → 开发态 sidecar 目录。
+    """资源锚点（绝对路径，只读资源用）：env 覆盖 → 打包态 → 开发态 sidecar 目录。
 
-    注：任务原文写「项目根（开发）」，但 vendor/ 实际位于 sidecar/ 下；
+    注：BASE 仅锚定只读资源（vendor/dict、models）。可写数据（DB）打包态走
+    用户数据目录（见 default_db_path），绝不进 bundle。
+    （任务原文写「项目根（开发）」，但 vendor/ 实际位于 sidecar/ 下；
     为使 vendor 恒为 BASE/vendor（与打包态 _MEIPASS/vendor 同构），
-    开发态 BASE 取 sidecar 目录。不变的是 R3 要求：绝对锚定 + env 可覆盖。
+    开发态 BASE 取 sidecar 目录。不变的是 R3 要求：绝对锚定 + env 可覆盖。）
     """
     override = os.environ.get("INTERVIEWCOPILOT_BASE")
     if override:
@@ -75,7 +77,21 @@ def default_db_path() -> Path:
     override = os.environ.get("INTERVIEWCOPILOT_DB")
     if override:
         return Path(override).resolve()
+    if getattr(sys, "frozen", False):
+        # 打包态：写数据绝不进 bundle（_MEIPASS 只读假设 + 避免污染体积基线），
+        # 进 OS 用户数据目录。
+        return _user_data_dir() / "interviewcopilot.db"
     return resolve_base() / "data" / "interviewcopilot.db"
+
+
+def _user_data_dir() -> Path:
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(base) / "InterviewCopilot" / "data"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "InterviewCopilot" / "data"
+    xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(xdg) / "interviewcopilot" / "data"
 
 
 def check_vendor_files() -> list:
