@@ -14,7 +14,9 @@ import {
   type SidecarCapture,
 } from "../lib/capture";
 
-const PROVIDERS = ["ollama", "openai", "custom"] as const;
+// F6.1 全量：六 provider（密钥全部复用 save_api_key → POST /settings/llm-secret，
+// secret_slot 即 provider 名，ollama 除外无需 key）。
+const PROVIDERS = ["ollama", "openai", "claude", "gemini", "groq", "custom"] as const;
 const PROVIDER_STORAGE_KEY = "interview-copilot.llm-provider";
 // bge 仍是向量检索的权重，与 ASR 模型走同一套下载通道（POST /model/download）。
 const BGE_MODEL = "bge-small-zh-v1.5";

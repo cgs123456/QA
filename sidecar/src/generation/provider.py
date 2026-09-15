@@ -2,8 +2,14 @@
 
 - generate() 返回异步生成器（逐 chunk 流式）；调用方按需迭代。
 - 超时 30s：httpx Timeout → ProviderError(kind="timeout")，走 error 路径。
-- 错误映射（kind）：timeout / connection / http / protocol；错误信息只含
-  URL 与状态码，永不含 API Key（R8：key 只进 Authorization 头，异常不回显头）。
+- 错误映射（kind）：timeout / connection / http / protocol / auth /
+  rate_limited；错误信息只含 URL 与状态码，永不含 API Key
+  （R8：key 只进鉴权头，异常不回显头）。
+  - auth：401/403（key 缺失/错误/无权限）。
+  - rate_limited：429（Groq 免费档严格，kind 单列供 P8 降级链区分）。
+- 三家新 provider（claude/gemini/groq）实现在同目录独立模块
+  （claude_provider.py / gemini_provider.py / groq_provider.py），
+  SSE 解析器各自独立、不共用状态机。
 """
 
 from typing import AsyncIterator, Protocol
@@ -64,6 +70,27 @@ def get_provider(name: str, model: str | None = None, api_key: str | None = None
         if not resolved:
             raise ValueError("openai 缺少 API Key（先经 settings 推送或构造传入）")
         return OpenAIProvider(api_key=resolved, model=model or OpenAIProvider.DEFAULT_MODEL)
+    if key == "claude":
+        from generation.claude_provider import ClaudeProvider
+
+        resolved = api_key or get_llm_secret("claude")
+        if not resolved:
+            raise ValueError("claude 缺少 API Key（先经 settings 推送或构造传入）")
+        return ClaudeProvider(api_key=resolved, model=model or ClaudeProvider.DEFAULT_MODEL)
+    if key == "gemini":
+        from generation.gemini_provider import GeminiProvider
+
+        resolved = api_key or get_llm_secret("gemini")
+        if not resolved:
+            raise ValueError("gemini 缺少 API Key（先经 settings 推送或构造传入）")
+        return GeminiProvider(api_key=resolved, model=model or GeminiProvider.DEFAULT_MODEL)
+    if key == "groq":
+        from generation.groq_provider import GroqProvider
+
+        resolved = api_key or get_llm_secret("groq")
+        if not resolved:
+            raise ValueError("groq 缺少 API Key（先经 settings 推送或构造传入）")
+        return GroqProvider(api_key=resolved, model=model or GroqProvider.DEFAULT_MODEL)
     if key == "custom":
         return CustomProvider(
             base_url=(model or "").strip() or CustomProvider.DEFAULT_BASE_URL,
@@ -237,3 +264,82 @@ class CustomProvider(OpenAIProvider):
             base_url=base_url or self.DEFAULT_BASE_URL,
             client=client,
         )
+
+
+# F6.1 全量：LLM registry/catalog（设置页下拉 + /llm/providers 快照共用）。
+# 密钥全部复用 POST /settings/llm-secret（secret_slot 即 provider 名，
+# ollama 除外无需 key）。目录无状态，构造仍走 get_provider（懒导入，
+# 避免 generation 内循环引用）。定义置于类之后：需要引用各类的
+# DEFAULT_MODEL / DEFAULT_BASE_URL。
+LLM_CATALOG: dict = {
+    "ollama": {
+        "name": "ollama",
+        "display": "Ollama（本地）",
+        "needs_key": False,
+        "secret_slot": None,
+        "default_model": OllamaProvider.DEFAULT_MODEL,
+        "base_url": OllamaProvider.DEFAULT_BASE_URL,
+        "stream": "json-lines /api/generate",
+        "note": "本地，零网络依赖可离线",
+    },
+    "openai": {
+        "name": "openai",
+        "display": "OpenAI（gpt-4o-mini）",
+        "needs_key": True,
+        "secret_slot": "openai",
+        "default_model": OpenAIProvider.DEFAULT_MODEL,
+        "base_url": OpenAIProvider.DEFAULT_BASE_URL,
+        "stream": "SSE chat/completions",
+        "note": "OpenAI 兼容 SSE",
+    },
+    "claude": {
+        "name": "claude",
+        "display": "Claude（Anthropic）",
+        "needs_key": True,
+        "secret_slot": "claude",
+        "default_model": "claude-3-5-sonnet-20240620",
+        "base_url": "https://api.anthropic.com",
+        "stream": "SSE event: content_block_delta",
+        "note": "Anthropic Messages API 流式",
+    },
+    "gemini": {
+        "name": "gemini",
+        "display": "Gemini（Google）",
+        "needs_key": True,
+        "secret_slot": "gemini",
+        "default_model": "gemini-1.5-flash",
+        "base_url": "https://generativelanguage.googleapis.com",
+        "stream": "SSE streamGenerateContent alt=sse",
+        "note": "Google streamGenerateContent 流式",
+    },
+    "groq": {
+        "name": "groq",
+        "display": "Groq（OpenAI 兼容）",
+        "needs_key": True,
+        "secret_slot": "groq",
+        "default_model": "llama-3.1-70b-versatile",
+        "base_url": "https://api.groq.com/openai/v1",
+        "stream": "SSE chat/completions（OpenAI 兼容）",
+        "note": "免费档限流严格，429 kind 单列供 P8 降级",
+    },
+    "custom": {
+        "name": "custom",
+        "display": "自定义（OpenAI 兼容）",
+        "needs_key": False,
+        "secret_slot": "custom",
+        "default_model": "default",
+        "base_url": CustomProvider.DEFAULT_BASE_URL,
+        "stream": "SSE chat/completions（OpenAI 兼容）",
+        "note": "自建 OpenAI 兼容端点占位",
+    },
+}
+
+
+def list_llm_providers() -> list:
+    """目录名列表（固定顺序，供设置页下拉）。"""
+    return list(LLM_CATALOG)
+
+
+def describe_llm_providers() -> list:
+    """设置页/调试用的内容无关目录快照（无 key）。"""
+    return [dict(LLM_CATALOG[name]) for name in LLM_CATALOG]

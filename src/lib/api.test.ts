@@ -39,6 +39,26 @@ describe("ApiError", () => {
     expect(err.status).toBe(500);
     expect(err.message).toContain("500");
   });
+
+  it("carries parsed JSON payload when present (R17 422 详情用)", async () => {
+    const { apiPost } = await import("./api");
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response(
+          JSON.stringify({ detail: { error: "unsupported", reason: "scanned" } }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    const caught = await apiPost("/knowledge/import/preview", {}).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(caught).toBeInstanceOf(ApiError);
+    const err = caught as ApiError;
+    expect(err.status).toBe(422);
+    expect(err.payload).toEqual({ detail: { error: "unsupported", reason: "scanned" } });
+  });
 });
 
 describe("sidecarFetch abort", () => {

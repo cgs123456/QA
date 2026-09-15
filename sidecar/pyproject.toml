@@ -10,6 +10,11 @@ dependencies = [
     # 而是对 /audio/stream 的升级请求直接 404（task-14 实测）。
     "websockets>=13",
     "httpx>=0.27",
+    # P1 格式导入：Excel 解析（openpyxl，纯 Python）+ PDF 文本提取（pypdf，
+    # 纯 Python；刻意不用 pdfplumber——它拖 Pillow/pdfminer，原生依赖进
+    # PyInstaller onedir 包是体积与签名风险，见 pdf_parser.py 选型注释）。
+    "openpyxl>=3.1",
+    "pypdf>=6",
     "sqlite-vec>=0.1",
     "onnxruntime>=1.17",
     "transformers>=4.40",

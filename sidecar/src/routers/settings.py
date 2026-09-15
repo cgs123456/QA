@@ -1,4 +1,4 @@
-"""设置通道：模型密钥 + ASR Provider 选择（全部鉴权，由 app.py 挂载时统一加 verify_token）。
+"""设置通道：模型密钥 + LLM/ASR Provider 目录（全部鉴权，由 app.py 挂载时统一加 verify_token）。
 
 **密钥通道**：Rust 在握手后经本端点推送当前所选 provider 的 key；
 sidecar 仅内存持有（core/secrets.py），不落盘、不打日志、不回显。
@@ -58,6 +58,19 @@ def push_llm_secret(body: LLMSecretBody):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"stored": name}
+
+
+@router.get("/llm/providers")
+def list_llm_providers():
+    """LLM provider 目录快照（F6.1 全量：设置页 provider 下拉渲染用）。
+
+    内容无关：仅名字/显示名/是否需 key/默认模型/base_url/流格式/备注，
+    无 key、无密钥槽值。密钥复用 POST /settings/llm-secret
+   （secret_slot 即 provider 名，ollama 除外）。
+    """
+    from generation.provider import describe_llm_providers
+
+    return {"providers": describe_llm_providers()}
 
 
 @router.get("/asr/providers")

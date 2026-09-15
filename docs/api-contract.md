@@ -20,13 +20,16 @@ Tauri 校验 `protocol_version`，不匹配 → `sidecar://degraded`（version_m
 | GET | `/health` | 无 | `{"status":"ok","version","nonce"}`（nonce 为本次启动随机值，未启动/直连 app 对象时为 null；防端口复用占位者） |
 | GET | `/sidecar/info` | 是 | `{"version","capabilities"}`（鉴权闭环证明） |
 | POST | `/knowledge/compile` | 是 | `{store_id?,store_name?,format,content,filename?}` → `{store_id,stats}`；400 非法输入/JSON 失败；404 store 不存在 |
+| POST | `/knowledge/import/preview` | 是 | P1 dry-run：`{format:excel\|pdf,content_b64,filename?}` → Excel 逐 sheet 列映射提案（含每列样例 3 行）/ PDF 条目预览；不写库；400 坏文件/超限；422 扫描件（`{"error":"unsupported","reason":"scanned","message",pages}`，明确拒绝不静默） |
+| POST | `/knowledge/import/commit` | 是 | P1 确认导入：`{store_id?,store_name?,format,content_b64,filename?,mapping?}`（Excel mapping 必填，PDF 仅允许 `{"entity"}` 或省略）→ 服务端重解码/重解析/严格校验映射后短事务编译，返回同 compile 形状 `{store_id,stats}`（PDF 另有 `pdf_unsupported_pages`）；400 映射非法/空导入；422 扫描件；404 store 不存在 |
 | GET | `/knowledge/list` | 是 | stores 列表（含 qa/field 计数与 is_current） |
 | GET | `/knowledge/search` | 是 | `?q=&store_id?`（缺省当前库）→ `{store_id,query,field_hits,fts_hits,timings_ms}` |
 | POST | `/store` | 是 | `{name,template_id?}` → store 详情；400 空名 |
 | GET | `/store/{id}` | 是 | 详情 + 计数；404 |
 | DELETE | `/store/{id}` | 是 | 级联清理（含 vec 手工清）；404 |
 | PUT | `/stores/current` | 是 | `{store_id}` 单选切换；404 |
-| POST | `/settings/llm-secret` | 是 | `{provider,api_key}` → `{"stored":provider}`；不回显 key；400 空值 |
+| POST | `/settings/llm-secret` | 是 | `{provider,api_key}` → `{"stored":provider}`；不回显 key；400 空值（F6.1 全量：claude/gemini/groq 复用同通道，secret_slot 即 provider 名） |
+| GET | `/llm/providers` | 是 | LLM 目录快照（F6.1 设置页 provider 下拉渲染）→ `{"providers":[{name,display,needs_key,secret_slot,default_model,base_url,stream,note}]}`；内容无关，无 key |
 | POST | `/qa/ask` | 是 | `{question,store_id?,provider?}` → `{"task_id"}`；400 空问/无当前库；404 store 不存在 |
 | GET | `/qa/stream?task_id=` | 是 | SSE（见下）；未知/过期 task → 404 |
 | POST | `/model/download` | 是 | `{model?}`（缺省 bge-small-zh-v1.5；ASR 权重传 `sense-voice` / `paraformer-zh` / `faster-whisper-base`）→ `{"download_id"}`；400 未知模型 |

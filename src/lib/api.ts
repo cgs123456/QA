@@ -23,12 +23,15 @@ export type ApiErrorKind =
 export class ApiError extends Error {
   kind: ApiErrorKind;
   status?: number;
+  /** 服务端错误体（JSON 可解析时为对象，否则为 undefined；R17 导入流用它读 422 详情）。 */
+  payload?: unknown;
 
-  constructor(kind: ApiErrorKind, message: string, status?: number) {
+  constructor(kind: ApiErrorKind, message: string, status?: number, payload?: unknown) {
     super(message);
     this.name = "ApiError";
     this.kind = kind;
     this.status = status;
+    this.payload = payload;
   }
 }
 
@@ -89,7 +92,13 @@ async function parseJsonOrThrow(res: Response, what: string) {
   }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new ApiError("http", `${what}失败：HTTP ${res.status} ${body}`, res.status);
+    let payload: unknown;
+    try {
+      payload = body ? JSON.parse(body) : undefined;
+    } catch {
+      payload = undefined;
+    }
+    throw new ApiError("http", `${what}失败：HTTP ${res.status} ${body}`, res.status, payload);
   }
   return res.json();
 }

@@ -251,3 +251,48 @@ provider `faster-whisper` base / int8 / CPU；环境 Windows AMD64，Python 3.13
 
 - `DEFAULT_SILENCE_RMS = 0.01`、`SILENCE_WINDOW ≈ 0.5s`：合成信号上有效，
   真机底噪未知，GPU 联调时与首片段时延一起标定。
+
+---
+
+# 多 LLM 首字延迟实测（F6.1 全量，2026-09-15）
+
+> 口径：`scripts/e2e_llm.py --provider {ollama,openai,claude,gemini,groq,custom}`
+> 经 `answer_stream` 全链路（检索→判定→LLM），`FIRST_TOKEN_S` = 提问发出 →
+> 首个 `chunk` 到达；`TOTAL_S` = 到 `done`。direct/fail_closed 无 chunk
+> 属正常（`FIRST_TOKEN_S=null`），不代表 LLM 故障。
+> 复现：`python scripts/e2e_llm.py --provider <名> [--model …] [--api-key …]`；
+> key 解析顺序 `--api-key` > 环境变量（openai `OPENAI_API_KEY` /
+> claude `ANTHROPIC_API_KEY|CLAUDE_API_KEY` / gemini `GEMINI_API_KEY|GOOGLE_API_KEY` /
+> groq `GROQ_API_KEY`）> 内存密钥库；缺 key 即 exit 2 记延期，不伪造数字。
+
+## 真机联调结论（本机，2026-09-15）
+
+| provider | 可达性 | 首字延迟 | 备注 |
+|---|---|---|---|
+| ollama | 不可达（本地） | — | `127.0.0.1:11434` 连接拒绝（`[connection]`，2.13s 后失败）；`ollama serve` 未运行。本机直连探针确认非代码问题。`e2e_llm.py --provider ollama` 默认问题命中 direct（`+0.74s decision direct`），未触达 LLM，属正常短路。 |
+| openai | 网络可达、缺 key 延期 | — | dummy key 探针回 `HTTP 401`（0.87s），证明到 `api.openai.com` 网络通；无真实 key，`e2e_llm.py` 按设计 exit 2，不跑真机。 |
+| claude | 网络可达、缺 key 延期 | — | dummy key 回 `auth HTTP 401`（0.57s）；`e2e_llm.py --provider claude` 无 key 即 exit 2（已验证）。 |
+| gemini | 网络可达、缺 key 延期 | — | dummy key 回 `auth HTTP 400`（0.52s，Google 无效 key 用 400，已映射为 auth）；同上 exit 2 延期。 |
+| groq | 网络可达、缺 key 延期 | — | dummy key 回 `auth HTTP 401`（0.52s）；同上 exit 2 延期。 |
+| custom | 未配置延期 | — | 无默认端点，需 `--model <base_url>` + 自建服务；本机无服务，记延期。 |
+
+**延期台账（网络/key，非代码）：** 本机六 provider 均无可跑真机的 LLM 首字延迟——
+ollama 缺本地服务，openai/claude/gemini/groq 缺真实 API Key（网络本身可达，
+探针均在 <1s 内拿到鉴权类 HTTP 状态，非超时/断网），custom 缺自建端点。
+Mock 覆盖不放松：`test_llm_providers.py` **39 passed**（含每家 happy-path/
+401/429/500/协议/超时 + 四档判定 ×3 家），`pytest tests/` 全绿
+**281 passed, 1 skipped**。有 key / 有服务的机器按上节复现命令跑出
+`FIRST_TOKEN_S=…` 后追加到本表即关闭台账。
+
+## 实现要点（防坑记录）
+
+- 三家 SSE 各自独立解析器，不共用状态机：Claude 跟踪 `event: content_block_delta`
+  只取 `delta.text`（ping/message_delta/裸 data 全丢弃）；Gemini 逐 `data:` 取
+  `candidates[0].content.parts[*].text` 拼接（空 candidates 跳过，无 `[DONE]`）；
+  Groq 与 OpenAI 同形但独立实现（`choices[0].delta.content` + `[DONE]`）。
+- 错误 kind：401/403 → `auth`（Gemini 另含 400，Google 无效 key 用 400）；
+  429 → `rate_limited` 单列（Groq 免费档严格，供 P8 降级链区分，单测锁定
+  `!= "http"`）；其余非 200 → `http`；key 永不进异常文本（R8，单测断言）。
+- 目录：`generation/provider.py::LLM_CATALOG` + `GET /llm/providers`
+ （内容无关快照），设置页 `Settings.tsx::PROVIDERS` 六项，密钥全复用
+  `POST /settings/llm-secret`。

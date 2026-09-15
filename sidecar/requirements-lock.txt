@@ -8,6 +8,7 @@ certifi==2026.7.22
 click==8.5.0
 colorama==0.4.6
 ctranslate2==4.8.2
+et-xmlfile==2.0.0
 fastapi==0.141.1
 faster-whisper==1.2.1
 filelock==3.32.6
@@ -24,12 +25,16 @@ markdown-it-py==4.2.0
 mdurl==0.1.2
 numpy==2.5.3
 onnxruntime==1.30.0
+# P1 格式导入（2026-09-15，lockvenv 实装版本；均为纯 Python wheel，
+# 不进原生依赖；打包体积影响见后续 verify-packaged 复测）。
+openpyxl==3.1.5
 packaging==26.3
 pluggy==1.6.0
 protobuf==7.36.1
 pydantic==2.13.5
 pydantic_core==2.46.5
 Pygments==2.21.0
+pypdf==6.18.1
 pytest==9.1.1
 PyYAML==6.0.3
 regex==2026.9.10

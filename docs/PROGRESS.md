@@ -635,3 +635,29 @@
   门槛2（`scripts/e2e_m2_gate2_soak.py`，双路各 100 段/600s）：
   ends==finals（100/100 双路）、hash 零失配、e2e 中位 ~6ms（HashProvider 下限口径）、
   RSS 71.1MB → +3.6MB/604s（<50MB 线）。
+- R17 P1 用户面：映射确认 + 语义范围审核（2026-09-15）。
+  **新增**：`src/lib/importFlow.ts`（类型/映射编辑/客户端校验/分布摘要/422 解析，
+  纯函数可 node 单测）+ `src/hooks/useImport.ts`
+  （`useImportPreview` 60s/`useImportCommit` 120s，commit 成功刷 `["stores"]`）+
+  `src/components/ColumnMapping.tsx`（逐表逐列下拉 + 样例 + 建议标记 + 重置 +
+  整表默认值 + 行数上限提示）+ `src/components/ReviewPanel.tsx`
+  （精确计数 + 样例口径 entity/field_name 分布 + 口径声明 + 问题阻断确认）。
+  `src/lib/api.ts` 仅加 `ApiError.payload`（JSON 错误体透传，旧断言零改动）。
+  **Knowledge.tsx 集成**：`.md/.json` 直连块逐行未动；新增 Excel/PDF 审核区
+  （上传 → preview → 映射 → 审核 → commit → done，取消全清内存/base64/mutation
+  状态 + 文件框重挂载，无残留；扫描件 422 进明确提示态，commit 永不到达）。
+  **口径裁定**：preview 样例是 P1 锁定的有界子集（每列前 3 行，后端单测钉死，
+  不加量），分布摘要一律标“基于预览样例、非全量”，行数用后端精确计数 —
+  UI 不得把样例分布当全量分布。
+  全量：`vitest` **142 passed**（新增 31：importFlow 15 + ColumnMapping 5 +
+  ReviewPanel 6 + Knowledge 页级 4 + api payload 1）、`tsc --noEmit` 0、
+  `eslint src tests/e2e` 0。依赖：`jsdom` + `@testing-library/{react,user-event}`
+  进 devDependencies（node_modules 系 pnpm 安装，故用 pnpm 加包；npm arborist
+  在此仓必现 `Link.matches` 空指针，已避开）。
+  **人工走查清单（待真机）**：
+  1. 知识页选 `.xlsx`（多 sheet 含问答+字段）→ 提案列出建议角色/样例/行数提示。
+  2. 改一列为“忽略” → 进审核，摘要变化且 qaNote 重算 → 确认入库，列表计数涨。
+  3. 审核页点取消 → 回到干净态（文件框清空、无残留请求）；done 点关闭同。
+  4. 传扫描版 PDF → 明确提示（信息+不可读页号），无入库按钮可点。
+  5. 传 10MB+ 文件 → 前端先拦（“文件过大”），不发请求。
+  6. 传 `.md` 到审核框 → “不支持的文件类型”，preview 零调用。
