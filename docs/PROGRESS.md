@@ -635,6 +635,23 @@
   门槛2（`scripts/e2e_m2_gate2_soak.py`，双路各 100 段/600s）：
   ends==finals（100/100 双路）、hash 零失配、e2e 中位 ~6ms（HashProvider 下限口径）、
   RSS 71.1MB → +3.6MB/604s（<50MB 线）。
+- F6.1 多 LLM 全量补齐（2026-09-15）：三新 Provider + registry 扩展。
+  **新增**：`claude_provider.py`（Anthropic Messages API，`event: content_block_delta` 独立状态机）、
+  `gemini_provider.py`（`streamGenerateContent?alt=sse`，`candidates[0].parts` 拼接）、
+  `groq_provider.py`（OpenAI 兼容，base `api.groq.com/openai/v1`，独立解析不共用）。
+  错误 kind：401/403→`auth`（Gemini 另含 400）、429→`rate_limited` 单列（Groq 锁定 `!="http"` 供 P8）、其余→`http`；
+  key 永不进异常。
+  `provider.py`：`LLM_CATALOG` 六项 + `list/describe_llm_providers()` + `get_provider` 扩展（懒导入）；
+  `routers/settings.py`：`GET /llm/providers` 目录快照；密钥全复用 `POST /settings/llm-secret`。
+  `scripts/e2e_llm.py`：参数化 provider，`FIRST_TOKEN_S/TOTAL_S/ACTION` 机器行，缺 key exit 2。
+  `Settings.tsx`：`PROVIDERS` 六项。
+  单测：`test_llm_providers.py` 39 条（解析/401/429/500/协议/超时/连接 + 四档 `direct/maybe/fail/error ×3` 参数化）；
+  `pytest tests/` **281 passed, 1 skipped**。
+  真机：ollama 连接拒绝；openai/claude/gemini/groq 网络可达（dummy key 分别回 401/401/400→auth/401，
+  均 <1s）但缺真实 key，`e2e_llm.py` 按设计 exit 2；已记 `benchmark.md` 延期台账，Mock 覆盖不放松。
+- F6.1 knowledge.py 扩展（2026-09-15）：`POST /knowledge/import/preview|commit` 双端点。
+  preview 只读提案（Excel 逐 sheet 列映射建议/PDF 条目预览+样例），commit 服务端重解码/重解析/严格校验映射后短事务编译；
+  扫描件 422 `unsupported` 明确拒绝（不静默跳过）；10MB 前端先拦。
 - R17 P1 用户面：映射确认 + 语义范围审核（2026-09-15）。
   **新增**：`src/lib/importFlow.ts`（类型/映射编辑/客户端校验/分布摘要/422 解析，
   纯函数可 node 单测）+ `src/hooks/useImport.ts`
@@ -661,3 +678,85 @@
   4. 传扫描版 PDF → 明确提示（信息+不可读页号），无入库按钮可点。
   5. 传 10MB+ 文件 → 前端先拦（“文件过大”），不发请求。
   6. 传 `.md` 到审核框 → “不支持的文件类型”，preview 零调用。
+- C1b：「采集→VAD→端点→uplink→sidecar」生产链打通（2026-09-15；**注入验证替代真机**）。
+  **口径**：真机录音一律跳过（R19 六槽仍缺），用 `SyntheticSource` 注入替代——
+  注入走的是**完整生产管线**（真 `CapturePipeline` → 真 VAD → 真端点 → 真 uplink →
+  真 sidecar 子进程），不是旁路；注入源同样受 R13 `DropOldestQueue` 语义约束。
+  **① 双路 VAD worker**：每路**一个独立线程自建 `WebrtcVad` 实例**（`Vad` trait 故意
+  `!Send` —— webrtc-vad 持 `*mut Fvad`，不能跨线程共享）。消费管线 int16 帧 →
+  `is_voiced` → `endpoint` → 事件入上行队列（带 `path`）；VAD 分类错误计入
+  `PathSnapshot::vad_errors`，采集源错误计入 `CaptureStats::errors`。
+  **② 共用一个出站队列**：事件（`type=0x01`）与 float32 音频帧（`type=0x00`）走
+  同一条 uplink 出站队列、共用**一个 seq 空间**，seq 在**入队时**盖（R10）；
+  一连接一路（loopback / mic 各一条 WS，同 token 不同 `path`）。
+  **③ toggle 消费方**：`commands/audio.rs` 接 `capture://toggle`（快捷键/前端开关）→
+  启停采集服务（路数由平台矩阵决定）；停止 = **先对未闭合段补发 `segment_end`，
+  再优雅关 WS**。新增测试 `stop_flushes_the_open_segment_before_closing_the_socket`
+  （素材不补尾部静音 → 运行中 `segment_end` 为 0，stop 后恰好 1 条且排在最后一条
+  音频帧之后，连接真关）——「flush 不是可选项」从注释变成断言。
+  **④ uplink 重连（销既有债务）**：断线退避 1s/2s/4s ≤3 次；**seq/ts 续用不重置**；
+  耗尽 → `capture://degraded`；1007/1008 属策略性关闭 → 致命不重试；sidecar 被
+  manager 重启后 uplink 跟随恢复。`audio::uplink` **23 passed**（含 5 条新增）。
+  两个踩到的坑：`tokio::select!` 会 poll **所有**分支，两边同时完成时 `&mut JoinHandle`
+  被 poll 完 → 随后的 `await` panic（改为 select oneshot 通知再 abort 另一边）；
+  `OutQueue::close()` 原用 `notify_waiters()`，在「刚查完 closed、还没注册进 select」
+  的窗口会丢唤醒信号（改 `notify_one()` 存 permit）。
+  **⑤ 诊断接线**：`PathSnapshot` 加 `source_device` + `source_stats`（含 `errors`），
+  `CaptureStats` 加 `errors` + `Serialize`；前端 `capture.ts` 的 `diagnosticsRows()`
+  改用 `source_device`/`source_stats`，新增「上行丢帧」常驻行与重连/降级/发送失败条件行。
+  sidecar 侧 `capture` 段**不再是占位 `pending`**：`_capture_status()` 报
+  `connected`（带 `active_paths`）/ `idle` / `disconnected`（`audio.py` 加 `_ACTIVE`
+  集合 + `active_paths()`）。**诊断数据全部来自真实 `CaptureStats`**，R14 内容无关。
+  连带更新 `test_diagnostics.py` 里硬断言 `pending` 的陈旧用例（那正是本轮要消灭的
+  占位值），并新增在连/断开的状态迁移用例。
+  **⑥ SyntheticSource**（`feature = "audio-testharness"`，仅 dev/example，生产构建无 hound）：
+  实现 `LoopbackSource` trait，`read_wav`（16/32-bit Int + 32-bit Float，其余报
+  `Unsupported`；立体声下混）或 `tone()` 生成信号；`Pace::{Fast, Realtime}`
+  （`Realtime` 按 `started + per*step` 对墙钟自校正，不累积漂移也不“追帧”睡眠）；
+  `stats()` 读的是喂帧线程**同一把** `Arc<FrameQueue>`，所以 `dropped` 是真值。
+  `examples/inject_wav.rs`：`--wav x.wav --path loopback [--realtime]` 走完整生产管线。
+  **11 条单测**全绿，含 `the_shipped_synth_wav_feeds_without_sample_loss`
+  （165 949 样本 → **250 帧**，分块喂无损）。
+  **⑦ 注入 E2E**（`tests/inject_e2e.rs`，feature-gated，**3 passed**）：
+  合成双语音 WAV → 真管线 → 真 VAD → 真端点 → 真 uplink → 真 sidecar
+  （复用 `scripts/serve_audio_e2e.py`，对端抽到 `tests/support/real_sidecar.rs`）。
+  **证据行**：
+  `INJECT_REFERENCE_PASS path=loopback segments=2 worst_boundary_error_frames=0`；
+  `INJECT_E2E_PASS frames=224 voiced_ratio=0.567 segments=2 seq_len=171 source_frames=224 uplink_frames=161 dropped=0`；
+  `INJECT_REFERENCE_PASS path=mic segments=1 worst_boundary_error_frames=0`；
+  `INJECT_DUAL_PATH_PASS loopback_frames=224 mic_frames=90 loopback_segments=2 mic_segments=1`；
+  `INJECT_SIDECAR_PASS segments=2 worst_duration_error_frames=0 sidecar_seq_gap=0 sidecar_dropped_oldest=0 frames=224`。
+  即：段边界误差 **0 帧**（<1 帧达标，双路都是 0）、`duration_ms` 误差 **0 帧**、
+  seq 连续、`dropped=0`（源与 uplink 双清零）、双路互不污染、
+  **sidecar 自己的计数器全 0**（`seq_gap`/`dropped_oldest`/`dropped_overload`/
+  `violations`/`unsolicited_audio`/`malformed`/`interrupted`，经 `GET /diagnostics/audio` 读）。
+  **黄金向量纪律**：参考实现只有一份（`sidecar/src/audio_eval/endpoint.py::detect_segments`），
+  经 `scripts/endpoint_reference.py` 子进程调用，**刻意不在 Rust 里重写**
+  （重写就变成“拿我的实现当标准”）；该脚本已先验复现 `testdata/endpoint_fixture.json`
+  **29/29 例**。
+  **DoD 数字**：`cargo test --features audio-testharness` **142 passed**
+  （lib 125 + audio_frames_wav 1 + audio_ws_e2e 3 + capture_service_wiring 6 +
+  endpoint_parity 4 + inject_e2e 3）；`cargo test` 不带 feature **114 passed**
+  （inject_e2e 被门挡掉，显示 0 tests，不是编译失败）；`clippy --all-targets
+  -- -D warnings` **0**（带/不带 feature 都是 0）；`cargo fmt --check` **0**；
+  `pytest` **311 passed / 1 skipped**（无回归）；`tsc --noEmit` 0；
+  `eslint src --max-warnings=0` 0；`vitest run` **148 passed**。
+  **诚实记录**：
+  ① 注入 E2E 观测到 224 帧而素材全长是 250 帧 —— 不是丢帧：测试在**第 2 段闭合后
+  即停**，剩下的是尾部静音；`the_shipped_synth_wav_feeds_without_sample_loss` 已钉死
+  “整段喂进去 250/250 一帧不丢”。
+  ② `Pace::Fast` **本来就会触发 R13 drop-oldest**（设计如此，不是 bug）；源自身永不丢样本。
+  ③ `CapturePipeline` **没有 `flush()`**：停止时还留在 `backlog`（不满一个 rubato
+  输入块）、`ready`（不满一帧）与 rubato 内部延迟里的样本不会变成帧。
+  **实测上界**（`audio::resample` 的
+  `stop_time_in_flight_tail_is_bounded_by_the_buffers_themselves` 钉住）：
+  16k 直通 / 44.1k / 48k 最坏 **< 1 帧（≈30 ms）**、22.05k 最坏 **≈2 帧（59.4 ms）**、
+  硬上界 ≤ 3 帧（90 ms）—— **数量级是几十毫秒，不是几百毫秒**（此前记为“几百 ms”是错的，
+  已实测更正）。且其中大部分不可挽回（帧是定长 30 ms，不满 480 的零头发不出去），
+  flush 最多补回一帧 → **判定不值得修**。
+  ④ 环境（与代码无关，但会伪装成回归）：跑会拉起真实 sidecar 的测试必须带
+  `INTERVIEWCOPILOT_PYTHON` + `NO_PROXY=127.0.0.1,localhost`（本机有系统级代理会把
+  本机端口拦成 502），否则 `audio_ws_e2e` 3 条全红；`target/debug/incremental` 损坏后
+  rustc 会稳定报 ICE（`compiler unexpectedly panicked`），`CARGO_INCREMENTAL=0` 即解。
+  **待真机**（本任务不可闭）：R19 六样本真实录音仍缺，故本条只证明“管线正确”，
+  不证明“真实声学环境下的边界准确率”。
