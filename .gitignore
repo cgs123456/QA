@@ -63,3 +63,11 @@ dist-sidecar/
 build/
 build-sidecar/
 *.spec
+
+# Agent 本地工作区：memory/ 是项目记忆（要提交，与 docs/ 同级看待），
+# backup/ 是本地安全备份（不进仓库）。故只忽略 backup/，不整体忽略 .workbuddy-ai/。
+.workbuddy-ai/backup/
+
+# 一次性排查脚本：一律放仓库根、下划线前缀，用完即删（避免又攒成一批）。
+/_*_probe.py
+/_*_probe_*.py

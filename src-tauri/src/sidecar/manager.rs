@@ -26,8 +26,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use super::degradation::{
-    DegradedInfo, DegradedSink, DEGRADED_EVENT, REASON_RESTART_EXHAUSTED,
-    REASON_VERSION_MISMATCH, handle_handshake_result,
+    handle_handshake_result, DegradedInfo, DegradedSink, DEGRADED_EVENT, REASON_RESTART_EXHAUSTED,
+    REASON_VERSION_MISMATCH,
 };
 use super::protocol::{parse_handshake, HandshakeError, SidecarHandshake};
 
@@ -293,9 +293,7 @@ pub async fn sidecar_log_tail(lines: u64) -> Result<String, String> {
             let start = all.len().saturating_sub(n);
             Ok(all[start..].join("\n"))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok("(暂无 sidecar 日志)".to_string())
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("(暂无 sidecar 日志)".to_string()),
         Err(e) => Err(format!("读取日志失败：{e}")),
     }
 }
@@ -305,8 +303,8 @@ pub async fn sidecar_log_tail(lines: u64) -> Result<String, String> {
 /// (`print(..., flush=True)`); bind failure exits non-zero before any
 /// handshake is printed, so it surfaces as timeout/closed stdout. On ANY
 /// handshake failure the child is killed so no orphan survives.
-pub async fn spawn_and_handshake(
-) -> Result<(tokio::process::Child, SidecarHandshake), SpawnError> {
+pub async fn spawn_and_handshake() -> Result<(tokio::process::Child, SidecarHandshake), SpawnError>
+{
     let python = python_interpreter();
     let entry = sidecar_entry();
     let mut child = tokio::process::Command::new(&python)
@@ -372,9 +370,7 @@ async fn health_ok(port: u16) -> bool {
     let probe = async {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
         stream
-            .write_all(
-                b"GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
-            )
+            .write_all(b"GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
             .await?;
         let mut resp = Vec::new();
         let mut chunk = vec![0u8; 1024];
@@ -473,8 +469,7 @@ pub async fn supervise(app: AppHandle) {
                 };
                 failures = if healthy_seen { 1 } else { failures + 1 };
                 if failures > MAX_RESTARTS {
-                    let detail =
-                        format!("sidecar failed {failures} times in a row; giving up");
+                    let detail = format!("sidecar failed {failures} times in a row; giving up");
                     println!("[sidecar] {detail}");
                     set_degraded_state(&app, REASON_RESTART_EXHAUSTED, &detail).await;
                     if let Some(state) = app.try_state::<SidecarState>() {
@@ -495,11 +490,9 @@ pub async fn supervise(app: AppHandle) {
             Err(e) => {
                 if let SpawnError::InvalidHandshake(ref he) = e {
                     // Tested path: emits sidecar://degraded(version_mismatch).
-                    let mapped =
-                        handle_handshake_result(&AppSink(app.clone()), &Err(he.clone()));
+                    let mapped = handle_handshake_result(&AppSink(app.clone()), &Err(he.clone()));
                     if mapped.as_deref() == Some(REASON_VERSION_MISMATCH) {
-                        set_degraded_state(&app, REASON_VERSION_MISMATCH, &e.to_string())
-                            .await;
+                        set_degraded_state(&app, REASON_VERSION_MISMATCH, &e.to_string()).await;
                         break;
                     }
                 }

@@ -15,9 +15,10 @@ fn open_entry(provider: &str) -> Result<keyring::Entry, String> {
             // Linux without a keychain backend → Phase 2 encrypted-file
             // fallback (currently a placeholder that reports unimplemented).
             let _ = super::fallback::get_api_key_fallback(provider);
-            Err("keyring unavailable on Linux and encrypted-file fallback"
-                .to_string()
-                + " is not implemented (Phase 2)")
+            Err(
+                "keyring unavailable on Linux and encrypted-file fallback".to_string()
+                    + " is not implemented (Phase 2)",
+            )
         }
         #[cfg(not(target_os = "linux"))]
         Err(e) => Err(format!("keyring unavailable: {e}")),

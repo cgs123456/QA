@@ -43,8 +43,7 @@ pub fn handle_handshake_result(
 ) -> Option<String> {
     match result {
         Err(HandshakeError::VersionMismatch { expected, got }) => {
-            let detail =
-                format!("protocol_version mismatch: expected {expected}, got {got}");
+            let detail = format!("protocol_version mismatch: expected {expected}, got {got}");
             sink.emit_degraded(REASON_VERSION_MISMATCH, &detail);
             Some(REASON_VERSION_MISMATCH.to_string())
         }
