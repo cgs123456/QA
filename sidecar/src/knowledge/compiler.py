@@ -24,9 +24,24 @@ def compile_store(
     stats_extra: dict | None = None,
     embeddings: dict | None = None,
     vocab_miss: int = 0,
+    vec_table: str | None = None,
 ) -> dict:
-    """入库。返回 content-free 统计（只记行数）。"""
+    """入库。返回 content-free 统计（只记行数）。
+
+    vec_table：向量写入哪张 vec 表（None = 当前生效 provider 对应的表，
+    双 embedding 下新入库必须与检索同源）。表名经白名单校验后才拼 SQL；
+    每行写前过维度守卫（512 模型的向量写不进 cloud 表，反之亦然）。
+    """
     get_store(conn, store_id)  # 不存在即抛 StoreNotFound
+    if vec_table is None:
+        from retrieval.embedding import active_table
+
+        vec_table = active_table()
+    else:
+        from retrieval.embedding import DIM_FOR_TABLE
+
+        if vec_table not in DIM_FOR_TABLE:
+            raise ValueError(f"未知 vec 表：{vec_table}")
 
     existing_qa = {
         r[0]: (r[1], r[2])
@@ -101,8 +116,11 @@ def compile_store(
                 else:
                     stats["qa_skipped"] += 1
             if qid in emb:
+                from retrieval.embedding import check_blob_dim
+
+                check_blob_dim(vec_table, emb[qid])
                 conn.execute(
-                    "INSERT OR REPLACE INTO vec_qa_local(qa_id, embedding)"
+                    f"INSERT OR REPLACE INTO {vec_table}(qa_id, embedding)"
                     " VALUES (?, ?)",
                     (qid, emb[qid]),
                 )

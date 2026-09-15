@@ -151,7 +151,9 @@ async def test_maybe_multi_context_top2(monkeypatch, db):
                 dict(_hit("a", "答案甲", 0.9), route="simple"),
                 dict(_hit("b", "答案乙", 0.89), route="simple")]
 
-    def fake_vec(conn, store_id, vector, top_k=5):
+    # 签名须与 vector_search 同步（含 table：双 embedding 下路由透传当前表）。
+    def fake_vec(conn, store_id, vector, top_k=5, table="vec_qa_local"):
+        assert table == "vec_qa_local"
         return [dict(_hit("a", "答案甲", 0.9), route="vec"),
                 dict(_hit("b", "答案乙", 0.89), route="vec")]
 

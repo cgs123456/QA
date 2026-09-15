@@ -27,6 +27,9 @@ NO_AUTH_CASES = [
     ("GET", "/llm/providers", None),
     ("POST", "/qa/ask", {}),
     ("GET", "/qa/stream?task_id=x", None),
+    ("GET", "/embedding/provider", None),
+    ("POST", "/embedding/provider", {}),
+    ("GET", "/embedding/rebuild/x", None),
     ("POST", "/model/download", {}),
     ("GET", "/model/download/x", None),
     ("GET", "/asr/providers", None),
@@ -34,6 +37,7 @@ NO_AUTH_CASES = [
     ("GET", "/asr/latency", None),
     ("PUT", "/asr/latency", {}),
     ("GET", "/diagnostics/audio", None),
+    ("GET", "/diagnostics/degrade", None),
 ]
 
 

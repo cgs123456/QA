@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI
 
 from core.auth import verify_token
 from routers.audio import router as audio_router
+from routers.embedding import router as embedding_router
 from routers.knowledge import router as knowledge_router
 from routers.model import router as model_router
 from routers.qa import router as qa_router
@@ -39,6 +40,7 @@ app.include_router(knowledge_router, dependencies=[Depends(verify_token)])
 app.include_router(store_router, dependencies=[Depends(verify_token)])
 app.include_router(settings_router, dependencies=[Depends(verify_token)])
 app.include_router(qa_router, dependencies=[Depends(verify_token)])
+app.include_router(embedding_router, dependencies=[Depends(verify_token)])
 app.include_router(model_router, dependencies=[Depends(verify_token)])
 # WS 自行在握手处校验 Authorization Header（R9），此处不挂 Depends。
 app.include_router(audio_router)
