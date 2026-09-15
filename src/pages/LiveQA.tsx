@@ -40,7 +40,9 @@ export function LiveQA() {
     triggerManual,
     requestCaptureToggle,
     reset,
-  } = useLiveQA();
+    // taskP7：本页是提词窗的数据源。卡片算好之后推给提词窗，那边只渲染不跑会话
+    // （否则同一个问题会发两次检索）。
+  } = useLiveQA({ broadcast: true });
 
   const paths = capturePaths(platform);
 

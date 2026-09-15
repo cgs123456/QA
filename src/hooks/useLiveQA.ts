@@ -5,7 +5,7 @@
  * 这里允许出现的只有：事件订阅、`Date.now()`、异步检索、把结果写进 state。
  */
 
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -34,6 +34,13 @@ export const EVT_ASR_FINAL = "asr://final";
 export const EVT_TELEPROMPTER_TRIGGER = "teleprompter://trigger";
 /** F1.6 开始/停止采集（Rust `shortcuts.rs`）。 */
 export const EVT_CAPTURE_TOGGLE = "capture://toggle";
+/**
+ * taskP7：主窗 → 提词窗的单向卡片推送。
+ *
+ * 提词窗**不**跑自己的会话（否则同一问题会发两次检索），它只订阅这个事件渲染。
+ * 载荷是 `LiveCard[]`（内容含转写与答案，属 UI 专用，**不得落日志**）。
+ */
+export const EVT_TELEPROMPTER_CARDS = "teleprompter://cards";
 
 /** 锁定期到期的轮询间隔：只影响「排队项何时被执行」，不影响锁定时长本身。 */
 const DRAIN_INTERVAL_MS = 250;
@@ -62,10 +69,17 @@ export type LiveQAState = {
 export type UseLiveQAOptions = LiveSessionOptions & {
   storeId?: string;
   provider?: string;
+  /**
+   * taskP7：把算好的卡片单向推给提词窗（`EVT_TELEPROMPTER_CARDS`）。
+   *
+   * 只有主窗该开这个开关。提词窗自己开的话会变成「两个窗互相推」，而且它本来
+   * 就不该跑会话 —— 会话的所有权必须唯一。
+   */
+  broadcast?: boolean;
 };
 
 export function useLiveQA(options: UseLiveQAOptions = {}) {
-  const { storeId, provider, ...sessionOptions } = options;
+  const { storeId, provider, broadcast = false, ...sessionOptions } = options;
 
   const sessionRef = useRef<LiveQASession | null>(null);
   if (sessionRef.current == null) sessionRef.current = new LiveQASession(sessionOptions);
@@ -209,6 +223,16 @@ export function useLiveQA(options: UseLiveQAOptions = {}) {
       cancelled = true;
     };
   }, []);
+
+  // taskP7：把算好的卡片单向推给提词窗。只在**引用真的变了**时发 ——
+  // `drain` 每 250ms 轮询一次，不加这个判断就变成 4 次/秒的空推。
+  const broadcastRef = useRef(state.cards);
+  useEffect(() => {
+    if (!broadcast || broadcastRef.current === state.cards) return;
+    broadcastRef.current = state.cards;
+    // 事件总线不存在（vitest / 浏览器直开）时静默降级：这是可选能力，不是主路径。
+    void emit(EVT_TELEPROMPTER_CARDS, state.cards).catch(() => {});
+  }, [broadcast, state.cards]);
 
   const triggerManual = useCallback(() => dispatch(session.manual(Date.now())), [dispatch, session]);
 

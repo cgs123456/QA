@@ -175,6 +175,34 @@ button {
   font-style: italic;
 }
 
+/* 需要用户注意但不阻断的提示（taskP7：自启读数不可信）。 */
+.warn {
+  color: #b08900;
+}
+
+/* ---- taskP7：提词窗（独立 WebviewWindow）---- */
+
+/* 窗口本身是 transparent 的，页面背景必须跟着透明，
+   否则透明窗口里还是一块 :root 的浅灰。
+   `html.overlay-window` 的特异性 (0,1,1) 高于 `:root` (0,1,0)，
+   所以这里的覆盖对 prefers-color-scheme: dark 那一份也生效。 */
+html.overlay-window,
+html.overlay-window body {
+  background: transparent;
+}
+
+.teleprompter-window {
+  box-sizing: border-box;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+/* 提词窗没有边框，卡片自己的留白就是边界，不必再顶一层 margin。 */
+.teleprompter-window .teleprompter {
+  margin-top: 0;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;

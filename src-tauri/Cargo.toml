@@ -18,12 +18,20 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# taskP7：`tray-icon` 是托盘能力（非默认 feature）；`image-png`/`image-ico` 给
+# `tauri::include_image!` 解码托盘图标用（`Image::from_bytes` 受这两个 feature 门控）。
+tauri = { version = "2", features = ["tray-icon", "image-png", "image-ico"] }
 tauri-plugin-opener = "2"
 # F1.6 全局快捷键：开始/停止采集 + 手动触发提词。
 tauri-plugin-global-shortcut = "2"
+# taskP7：开机自启开关（Settings 面板）。注册失败不阻断启动。
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Linux 加密文件 key 回退的 HKDF-CTR+HMAC-SHA256 构造（F6.3 Phase 2，P8）。
+# 此前在 dev-dependencies（端点 fixture 指纹用）；现为正式依赖——
+# Cargo.lock 零新增 crate（同版本 0.10，仅改依赖边），不算引入新依赖。
+sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 keyring = "2"
 reqwest = { version = "0.12", features = ["json"] }
@@ -35,6 +43,13 @@ futures-util = "0.3.34"
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.24.0"
+# taskP7：`SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` —— 提词窗不进屏幕捕获。
+# 只用到这两个 feature；`HWND` 在本 crate 里就是 `*mut c_void`，与 tauri 的
+# `window.hwnd()` 返回的 `windows::HWND(pub *mut c_void)` 可以裸指针直传。
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 # 注入测试台读 WAV 用（`SyntheticSource::from_wav`）。可选：不打开
 # `audio-testharness` 时生产构建里根本没有 hound。
@@ -57,8 +72,6 @@ strip = true
 
 [dev-dependencies]
 hound = "3.5.1"
-# 端点 fixture 的样本指纹（scripts/gen_endpoint_fixture.py 同算法）。
-sha2 = "0.10"
 
 # 注入人工走查工具：`cargo run --features audio-testharness --example inject_wav
 # -- --wav testdata/synth_utterance_zh.wav --path loopback --realtime`
