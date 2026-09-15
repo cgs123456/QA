@@ -359,4 +359,85 @@ mod tests {
         // one 30 ms frame's worth of lip-sync error budget.
         assert!(resampler.output_delay_frames() <= FRAME_SAMPLES);
     }
+
+    /// 停表时「在途」样本的实测上界（`CapturePipeline` 没有 `flush()`）。
+    ///
+    /// 停止采集时，仍留在 `backlog`（不满一个 rubato 输入块）、`ready`（不满一帧）
+    /// 与 rubato 内部延迟里的样本**不会变成帧**，因此不会上行。本测试把这个上界钉住，
+    /// 免得日后有人凭印象把它说成「丢了几百毫秒」。
+    ///
+    /// 断言用的是**可证明的结构量**而不是扫出来的经验值：循环条件保证
+    /// `backlog.len() < input_frames_per_frame()`、`ready.len() < FRAME_SAMPLES`，
+    /// 所以损失的硬上界是
+    /// `(in_per_frame - 1) * ratio + (FRAME_SAMPLES - 1) + output_delay`
+    /// （16 kHz 直通不走 backlog，首项为 0）。
+    ///
+    /// 实测（2026-09-15，4 个采样率 × 120 个输入长度取最坏）：
+    ///
+    /// | 采样率 | 输入块 | rubato 延迟 | 硬上界 | 实测最坏 |
+    /// |---|---|---|---|---|
+    /// | 16 000（直通） | — | 0 | 479 样本 = 30 ms | 470 样本 = 29 ms |
+    /// | 22 050 | 882 | 320 | 1438 样本 = 90 ms | 951 样本 = 59 ms |
+    /// | 44 100 | 1323 | 240 | 1199 样本 = 75 ms | 479 样本 = 30 ms |
+    /// | 48 000 | 1440 | 240 | 1199 样本 = 75 ms | 476 样本 = 30 ms |
+    ///
+    /// 22.05k 最差是因为 rubato 给它选的输入块是 882，而理想值是 661.5 ——
+    /// 能搁浅的零头更大。**结论：数量级是几十毫秒（≤ 3 帧），不是几百毫秒。**
+    ///
+    /// 而且其中**大部分不可挽回**：最后那个不满 480 的零头本来就发不出去
+    /// （帧是定长 30 ms，没有「半帧」这种东西）。真正能靠 flush 补回来的只有
+    /// rubato 延迟里那部分，最多一帧 —— 故不值得为它给生产链加一条 `flush()` 路径。
+    #[test]
+    fn stop_time_in_flight_tail_is_bounded_by_the_buffers_themselves() {
+        for rate in [16_000u32, 22_050, 44_100, 48_000] {
+            let probe = MonoResampler16k::new(rate).unwrap();
+            let in_per_frame = probe.input_frames_per_frame();
+            let delay = probe.output_delay_frames();
+            let ratio = SAMPLE_RATE as f64 / rate as f64;
+            // 直通（16 kHz）根本不走 backlog，别把它的容量算进上界。
+            let backlog_capacity = if probe.inner.is_none() {
+                0.0
+            } else {
+                (in_per_frame - 1) as f64 * ratio
+            };
+            let bound = backlog_capacity + (FRAME_SAMPLES - 1) as f64 + delay as f64;
+
+            let mut worst = 0.0f64;
+            // 扫不同输入长度 ≈ 模拟「用户在任何时刻松手」。步长 37 × 120 步 = 4440，
+            // 足以覆盖最大输入块（1440）的整个相位。
+            for step in 0..120 {
+                let n = 30_000 + step * 37;
+                let mut r = MonoResampler16k::new(rate).unwrap();
+                let frames = r.push(&vec![0.1f32; n]).unwrap().len();
+                // 结构性不变量：这正是上界的来源，必须逐点成立。
+                assert!(
+                    r.backlog.len() < in_per_frame,
+                    "rate={rate}: backlog {} >= input block {in_per_frame}",
+                    r.backlog.len()
+                );
+                assert!(
+                    r.ready.len() < FRAME_SAMPLES,
+                    "rate={rate}: ready {} >= one frame",
+                    r.ready.len()
+                );
+                worst = worst.max(n as f64 * ratio - frames as f64 * FRAME_SAMPLES as f64);
+            }
+
+            println!(
+                "rate={rate:>6} in_per_frame={in_per_frame:>4} output_delay={delay:>3} \
+                 bound={bound:.0} samples ({:.1} ms) worst_measured={worst:.0} samples ({:.1} ms)",
+                bound / 16.0,
+                worst / 16.0
+            );
+            assert!(
+                worst <= bound + 1.0,
+                "rate={rate}: measured tail loss {worst:.0} exceeds the provable bound {bound:.0}"
+            );
+            // 硬上界：三帧（90 ms）—— 实测最坏 59 ms，留一倍余量。
+            assert!(
+                worst < 3.0 * FRAME_SAMPLES as f64,
+                "rate={rate}: tail loss {worst:.0} samples exceeds 3 frames"
+            );
+        }
+    }
 }

@@ -38,8 +38,13 @@ export CARGO_INCREMENTAL=0                                      # 见下：增�
 ## 音频管线（M2）事实
 
 - `Vad` trait 故意 `!Send` → **每路一个 worker 线程自建 VAD 实例**，不能共享。
-- `CapturePipeline` **没有 `flush()`**：停止时重采样器内部积压（FFT block + output_delay）
-  不会变成帧 → 真实采集停表会丢最后几百 ms。已知、未修、不在 M2-8 范围内。
+- `CapturePipeline` **没有 `flush()`**：停止时还留在 `backlog` / `ready` / rubato
+  内部延迟里的样本不会变成帧。**实测上界**（`resample.rs` 的
+  `stop_time_in_flight_tail_is_bounded_by_the_buffers_themselves` 钉住）：
+  16k 直通 / 44.1k / 48k 最坏 **< 1 帧（≈30 ms）**，22.05k 最坏 **≈2 帧（59.4 ms）**，
+  硬上界 ≤ 3 帧（90 ms）。**是几十毫秒，不是几百毫秒**（此前记为「几百 ms」是错的，
+  2026-09-15 已实测更正）。且大部分不可挽回——不满 480 的零头发不出去，
+  flush 最多补回一帧 → 判定不值得修。
 - 端点常量：`FRAME_MS=30` / `START_WINDOW=5` / `START_MIN_VOICED=3` /
   `END_SILENCE_FRAMES=17` / `MIN_KEEP_FRAMES=9` / `MAX_SEG_FRAMES=500` / `HOLD_CAPACITY=21`
   （`endpoint.rs` 注释为准，`service.rs` docstring 的 22 是旧值）。

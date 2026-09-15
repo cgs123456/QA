@@ -36,9 +36,16 @@
 //! - 本文件里的 `dropped == 0` / `holes == 0` 钉住了"已推的那部分一帧不丢"。
 //!
 //! 顺带记一个**生产链路既有的性质**（不是本任务引入的，也不在本任务范围内）：
-//! `CapturePipeline` 没有 `flush()`，所以停止时重采样器内部还留着的那些样本
-//! （不足一个 FFT 块 + `output_delay`）永远不会变成帧。真实设备上这最多是
-//! 停止瞬间丢掉几十~几百毫秒的尾巴；要修就是给管线加 flush 并在 stop 时调用。
+//! `CapturePipeline` 没有 `flush()`，所以停止时还留在 `backlog`（不足一个 rubato
+//! 输入块）、`ready`（不足一帧）与 rubato 内部延迟里的样本永远不会变成帧。
+//!
+//! **实测上界（2026-09-15，见 `audio::resample::tests` 的
+//! `stop_time_in_flight_tail_is_bounded_by_the_buffers_themselves`）**：
+//! 16 kHz 直通 / 44.1 kHz / 48 kHz 最坏 **< 1 帧（≈30 ms）**，
+//! 22.05 kHz 最坏 **≈2 帧（59.4 ms）**，硬上界 ≤ 3 帧（90 ms）。
+//! 即**数量级是几十毫秒，不是几百毫秒**；而且其中大部分不可挽回——
+//! 最后那个不满 480 的零头本来就发不出去（帧是定长 30 ms）。
+//! 真要 flush 最多补回一帧，故判定**不值得**给生产链加这条路径。
 //!
 //! 需要 `INTERVIEWCOPILOT_PYTHON`（或 PATH 上有 `python`）；`INTERVIEWCOPILOT_SKIP_E2E=1` 跳过。
 
