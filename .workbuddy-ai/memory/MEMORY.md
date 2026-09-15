@@ -53,3 +53,81 @@ export CARGO_INCREMENTAL=0                                      # 见下：增�
 - 黄金向量唯一来源：`sidecar/src/audio_eval/endpoint.py::detect_segments`。
   **不要用 Rust 重写一份参考实现**去比对（那是"拿我的实现当标准"）——
   经 `scripts/endpoint_reference.py` 子进程调用同一份 Python 实现。
+
+## 窗口 / 托盘 / 自启（taskP7）事实
+
+- `tauri = { features = ["tray-icon", "image-png", "image-ico"] }` ——
+  **`tray-icon` 不是默认 feature**；`image-*` 只有用 `tauri::include_image!` 才需要
+  （`default_window_icon()` 不需要）。
+- Windows 捕获排除：`windows-sys 0.61` 的
+  `SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE /* 17u32 */)`。
+  **`window.hwnd()` 返回 `windows::HWND(pub *mut c_void)`，而 windows-sys 的 `HWND`
+  就是 `*mut c_void`** → 裸指针直传，**不要为了这个引入 `windows` crate**。
+- macOS 等价物走 `WebviewWindowBuilder::content_protected(true)`
+  （tao 内部 `ns_window.setSharingType(NSWindowSharingType::None)`），无 cfg 门控。
+- `tauri_plugin_autostart`：插件 `setup` **不写注册表**（只解析 `current_exe()`），
+  所以启动期不存在「自启注册失败」。但 `ManagerExt::autolaunch()` 内部是 `state()`，
+  **取不到会 panic** → 要失败不致命就用 `app.try_state::<AutoLaunchManager>()`。
+- `tauri::tray::MouseButtonState` 的 doc 注释把 `Up`/`Down` **写反了**；
+  实测 `Up` = 松开。左键单击只能认一个方向。
+- `WebviewUrl::App` 收 `PathBuf`，给第二个窗口传参数**别塞 query**；
+  用 `initialization_script` 注入 `window.__XXX__` 全局变量（也不用改 Vite 配置）。
+- **新窗口必须单独进 `capabilities/default.json` 的 `windows` 数组**（现为
+  `["main", "teleprompter"]`），否则新窗口没有权限。
+- 提词窗（label `teleprompter`）是主窗「实时提词」页的**镜像**：
+  主窗 `useLiveQA({broadcast:true})` → `emit("teleprompter://cards")`，
+  提词窗只订阅渲染。**不给提词窗开第二份会话**（否则同一问题发两次检索）。
+- 主窗「关闭」= **收进托盘**（`tray::close_plan`），退出走托盘「退出」；
+  `tray_ready=false` 时放行真退出（否则托盘没建起来就关不掉程序）。
+- 隐身边界：`docs/stealth-boundary.md`（做什么 / **永远不做什么** / 不承诺什么）。
+  改这块代码前先读它，尤其 §2 的 10 项禁止清单。
+
+## ⚠️ 并发写者纪律（2026-09-15 事故后立的硬规则）
+
+本机**可能同时有多个会话在写同一个工作树**（实例：taskP7 与「P5 双 embedding」交叉在
+`docs/PROGRESS.md` / `docs/api-contract.md` / `src/pages/Settings.tsx`）。
+
+1. **不要用 `git show HEAD:<file> > <file>` 复位文件来做 hunk 切分** —— 会静默擦掉
+   并发会话未提交的改动。本次真擦掉了，靠动手前的 `cp` 备份才恢复。
+2. 要按功能切提交，先 `ls -la --time-style=+%H:%M:%S <files>` 对 `date +%H:%M:%S`
+   看 mtime；有刚被写过的文件就先别动。
+3. 并发下切提交的正确姿势：独立 worktree（`git worktree add --detach <tmp> HEAD`），
+   主工作树一个字节不碰；但挪 ref 前仍要确认没有别的写者（对方可能刚提交）。
+4. 动任何交叉文件前，先 `cp` 到 `.workbuddy-ai/backup/`（该目录已 gitignore）。
+5. 报告要**如实**：擦掉了什么、怎么恢复的、恢复证据（`diff -q` 逐字节一致）都要写。
+
+## 评测集与合成语料（2026-09-15 扩库后的事实）
+
+- 语料 = `sidecar/tests/eval/seed_demo.json`，**108 QA + 29 字段 / 6 类目**
+  （公司信息 8〔首版冻结〕+ 物流配送/退换货/支付与发票/会员与优惠/产品与规格 各 20）。
+  文件名 `seed_demo` 是历史遗留，**它就是唯一语料，没有第二份**。
+- 题目 = `sidecar/tests/eval/questions_100.jsonl`，**100 行 / 87 scored / 13 null**
+  （null 占比硬约束 **10~15/100**，`test_eval.py` 里是区间断言）。
+  追加纪律：**只追加，不改已有行**（README：冻结后不得为提分而改）。
+- 出题引用的 `expected_qa_id` 必须真在语料里，否则该题永不命中且 runner 不报错
+  → 有 `test_every_expected_id_resolves_to_the_corpus` 兜着。
+- **`test_eval.py` 硬编码了题目数 / null 数 / real 标签数** —— 任何扩库扩题都要同步改。
+- 跑基线：`python scripts/eval_baseline.py --section v3 --before docs/eval-v2-summary.json`
+  （`--section` 只替换同名节，历史节原样保留；`--before` 用于生成对照表）。
+  摘要落 `docs/eval-v<节名>-summary.json`。
+
+## 检索引擎的三个已知结构性缺口（v3 基线暴露，**未修**，属 D6）
+
+都在 `docs/eval-baseline.md` §v3「已知缺口」里有逐条证据。**动引擎前先读那一节。**
+
+1. **字段路 entity 级联动**：字段命中把**同 entity 全部 QA** 拉到 `s.field=1.0`
+   （不是命中字段自己的 0.8）→ entity 内 20 篇被拉平，排序退化为 bm25 噪声
+   （`发票怎么开` top3 极差 0.003 却越过 TH_DIRECT → **direct 错答**）。
+2. **`instr(alias, kw)` 子串判定**：`field_vocab.json` 里 `发货周期` 的别名含 `多久发货`
+   → 关键词 `多久` 命中该字段 → 跨 entity 污染（`保修期多久` 被拉成 eval-001 direct）。
+   注意 `field_lookup` 注释里「词表里没有 `支持`」的论证**没覆盖这种情况**。
+3. **对抗性 null 会过期**：`有纸质发票吗` 在 8 篇语料下拒答，108 篇发票题群下变 direct。
+   null 的有效性依赖「语料里没有同词族答案」，语料一变就要重标。
+
+## 两条通用教训（本项目反复出现）
+
+- **小语料的漂亮指标不是质量，是仪器。** v1「零答错」是低召回副产品；
+  v2「Top-3 0.980」是 8 文档语料的产物（同题换 108 篇 → 0.796、答错 1→11）。
+  **报召回指标必须同时报 qa_docs。**
+- **改测试的隐式假设会被扩库打穿**：`test_answer_router` 依赖 `退货期限 → direct`，
+  扩库后靠 jieba/simple 的额外票侥幸保住。出题/扩库前先把 seed 消费者的断言清单拉出来。

@@ -33,9 +33,13 @@
   **行为变更（记档）**：SSE 流结束却未收到 `done` 事件时现在**抛错**（此前静默当成成功，UI 停在占位文案）。
   理由：按契约 sidecar 总会发 `done`，缺它就是传输被截断；截断的答案看起来像完整答案，
   对提词场景尤其危险（用户会把半句话念出去）。
-  **裁剪（记档）**：采集服务（`endpoint.rs` 段端点状态机 + 采集生命周期）尚未落地，
-  故 F1.6 的「开始/停止采集」当前只发 `capture://toggle` 事件、前端显示「采集服务尚未接线」。
-  快捷键层不因此改动：它只做「键盘 → 事件」，不拥有采集状态。
+  **裁剪（时点记录 —— task-16 当时的状态，已被 C1b 取代，勿当现状读）**：
+  task-16 交付时采集服务（`endpoint.rs` 段端点状态机 + 采集生命周期）尚未落地，
+  故 F1.6 的「开始/停止采集」当时只发 `capture://toggle` 事件、前端显示「采集服务尚未接线」。
+  快捷键层当时不因此改动：它只做「键盘 → 事件」，不拥有采集状态。
+  **现状以 `## 当前` 节为准**：`endpoint.rs` 已落地（`2936f25`，C1b），
+  `capture://toggle` 已有真实消费方（`src-tauri/src/commands/audio.rs`，经 `lib.rs:47` 注册），
+  前端「尚未接线」提示已移除（`git grep "尚未接线" -- src` 零命中）。
 - task-15 段→文本→下行 + Provider 失败自动切换（2026-09-14）：sidecar ASR 从「抽象 + 替身」
   变为「真 provider + 降级链」。
   **新增文件**：`asr/faster_whisper_provider.py`（本地 base/int8/CPU，整段转写、语言自动，
@@ -309,26 +313,48 @@
   （`security/keychain.rs:15`、`sidecar/degradation.rs:43`、`sidecar/manager.rs:26/293/305/372/473/495`）——
   说明此前「rustfmt clean」的记录与当前 rustfmt 版本不符。本轮只格式化了 `shortcuts.rs`，
   未跨文件重排（避免制造无关 diff）；是否全仓 `cargo fmt` 待主人裁定。
-  **下一项（等主人派单，按既定节奏逐步汇报）**：
-  ① `endpoint.rs` 端点状态机（起始=最近 5 帧中 3 帧 voiced；结束=连续 ~500ms 静音 hangover；
-     最短段 250ms 丢弃；最长段 15s 强制切段；`vad_state` 心跳每 1s）——**仍未开始**；
-  ② 双路独立 VAD + 事件合并进统一 WS 上行队列（DoD：合成样本边界误差 <1 帧、双路互不干扰）；
-  ③ 把 `Frame16k` 经 `encode_ws_frame` 推给 sidecar `/audio/stream` 的生产接线
-     （目前 uplink 有完整单测与 e2e，但尚未接上采集管线）；
-  ④ 采集服务落地后，F1.6 的 `capture://toggle` 才有真实消费方（task-16 已发事件、未接线）。
-  **需主人裁定/知会（五项，原三项 + 本轮两项）**：① task-16 的三处落地裁定（手动触发绕过去重 /
-  「无疑问词」= 全文不含 / 句尾 `?` 判定文本，详见上节）；② task-14 的 DoD 字面
-  「错 token → 1008」与实测 403 的偏差（详见上节，已记 api-contract）；③ `dist-sidecar/`
-  仍是 task-10 旧包，重建被本机批量删除守卫拦住（详见 `docs/benchmark.md` 口径注记）；
-  ④ **中文默认 ASR 切 paraformer**（门槛1数据：同机 1.14s vs 18.0s；代价：非中文场景不可用，
-  需多语种 fallback；一行默认值改动，等明确指示）；⑤ **是否按当前范围打 `m2-audio-pipeline`**
- （M1 §4 同款覆盖程序；缺件/R19/平台/vendor/前端目检六项清除表见 acceptance-m2.md §4）。
+  **Phase 2 进度（2026-09-15 更新；本表是「当前」的唯一权威）**：
+  - 已完成：**P1**（匹配根因修复 + v2 基线）、**P2**（Excel/PDF 导入审核流，
+    测试并进 `test_import_p1.py`）、**P3**（映射确认 + 语义范围审核 UI）、
+    **P4**（首字延迟台账，缺真实 key 延期）、**C1b**（采集→VAD→端点→uplink→sidecar 生产链打通）、
+    **P5**（双 embedding 基建）、**P7**（窗口级增强：提词窗 / 捕获排除 / 托盘 / 开机自启）。
+  - 在途：**P8**（降级链 + 降级页，本会话；`security/fallback.rs` / `keychain.rs` /
+    `generation/fallback.py` / `diagnostics/degrade.py` / `routers/settings.py` 的
+    `/diagnostics/degrade` / 前端 provider-degraded 展示）—— **未提交，勿动其文件**。
+  - 阻塞：**P6** 阻塞于主人投喂。待派：**P9** / **P10**。
+  - **M2 tag 仍暂缓，剩 4 项环境阻塞**（均非本机可闭）：R19 缺真实录音 /
+    G1 缺 Ollama（云端 key 路径待主人）/ M2-13 缺 macOS-Linux 机器 / M2-12 缺 Tauri 壳。
+  - **旧「下一项」四条已被取代（勿再引用）**：① `endpoint.rs` 端点状态机**已落地**
+    （常量以 `audio/endpoint.rs` 注释为准：FRAME_MS=30 / START_WINDOW=5 / START_MIN_VOICED=3 /
+    END_SILENCE_FRAMES=17 / MIN_KEEP_FRAMES=9 / MAX_SEG_FRAMES=500 / HOLD_CAPACITY=21；
+    黄金向量唯一来源 `sidecar/src/audio_eval/endpoint.py::detect_segments`，经
+    `scripts/endpoint_reference.py` 子进程调用）；② 双路独立 VAD worker **已落地**；
+    ③ `Frame16k` → sidecar `/audio/stream` 生产接线 **已落地**（`audio_ws_e2e` 3 条在仓）；
+    ④ F1.6 `capture://toggle` **已有真实消费方**（`tray.rs` 菜单项；`CAPTURE_WIRED` 仍 false，
+    菜单项灰置）。本节旧文「endpoint 仍未开始 / 接线未做 / toggle 无消费方 / task-16 裁剪段」
+    均为 2026-09-14 状态，**已作废**。
+  - **「本机无 node」的 shell 级解释（补注）**：A 机「无 node_modules / 无 node」是**该 shell 的
+    PATH 事实，不是机器事实** —— taskP7 会话的 shell 里 `npx tsc --noEmit` / `npx eslint` /
+    `npx vitest run` 都能跑（见上节 taskP7 条⑧）。判断本机能力前先试 `npx`。
+
+  **需主人裁定（五项）—— 已全部闭合（2026-09-15）**：
+
+  | # | 事项 | 裁定 | 结果 / 去向 |
+  |---|---|---|---|
+  | ① | task-16 三处落地（手动触发绕过去重 /「无疑问词」= 全文不含 / 句尾 `?` 判文本） | **已批准** | 保留现实现，见上节 task-16 |
+  | ② | task-14「错 token → 1008」与实测 403 的偏差 | **已接受**（403 为准） | PRD 措辞更新**挂 PRD 回仓时**一并改；`api-contract.md` 已记实测 |
+  | ③ | `dist-sidecar/` 仍是 task-10 旧包 | **批准重建** | 归 **1b-HK 待执行**（本机批量删除守卫仍在，按 `benchmark.md` 口径注记的方式重建） |
+  | ④ | 中文默认 ASR 切 paraformer | **撤回**（维持 faster-whisper） | 依据：A 机 18.0s 系 `xray.exe`/`tun2proxy` 占满 CPU 所致，B 机同配置 **2195.5ms PASS** |
+  | ⑤ | 是否按当前范围打 `m2-audio-pipeline` | **M2 v3 取代，仍暂缓** | 打 tag 会把未达标项包装成关账；清除表见 `acceptance-m2.md` §4 |
 
 ## 待人工验证
 - task-16 F1.6 快捷键真机（需 Tauri 壳 + 真实桌面，本机无壳）：
   ① `pnpm tauri dev` 后按 `CmdOrCtrl+Shift+Space` → 前端「实时提词」页应触发一次检索
      （需先有转写文本，否则 `manual()` 返回 null、无动作 —— 这是设计行为）；
-  ② 按 `CmdOrCtrl+Shift+R` → 页面出现「已收到采集开关（F1.6）。采集服务尚未接线」提示；
+  ② 按 `CmdOrCtrl+Shift+R` → 应**真的开始/停止采集**（C1b 后已接线，`commands/audio.rs`
+     是 `capture://toggle` 的消费方）。**注意**：旧文写的「页面出现『已收到采集开关（F1.6）。
+     采集服务尚未接线』提示」**已作废** —— 该提示随 C1b 移除（`git grep "尚未接线" -- src` 零命中），
+     前端改为由 Rust 侧回推采集状态（`useLiveQA.ts:183`）。
   ③ 先占用 `Ctrl+Shift+R`（如另开一个注册同键的程序）再启动 → 应用**仍应正常启动**，
      stderr 可见 `[shortcuts] failed to register: ToggleCapture: ...`；
   ④ macOS 机器：页首应显示「采集路径：麦克风（仅麦克风（macOS 无系统回环采集））」，
@@ -336,7 +362,8 @@
 - task-16 DoD 真机（**必做，需真实转写文本**）：① 说「发货周期是多久」→ 答案卡应在 ≤4s 内出现
   （固定答案路径，1a 实测 ask→done 2.4ms，预算几乎全给 ASR）；② 连说两句相似问题
   → 第二句卡片带「复用」标签且**不重新检索**（网络面板应只见一次 `/qa/ask`）。
-  前置：采集服务未接线，本轮只能用合成 `asr_final` 事件或后续 `endpoint.rs` 落地后补测。
+  前置：**采集已接线（C1b 后）**，可真机说中文驱动完整链路；若机器无麦克风/回环设备，
+  仍可退回合成 `asr_final` 事件注入。
 - task-16 标定（阻塞于评测集）：PRD 明示去重阈值 0.85 / 锁定期 3s / 去重窗口 60s 为**初值**，
   需 100 题评测集标定后写回。已记录的已知代价：3-gram Jaccard 对中文容错很窄 ——
   「发货周期是多久」vs「发货周期是多久呢」= 5/6 ≈ 0.833 < 0.85，ASR 多吐一个语气词即漏去重。
@@ -801,3 +828,278 @@
   （R19 缺真实录音 / G1 缺 Ollama / M2-13 缺 macOS-Linux 机器 / M2-12 缺 Tauri 壳）。
   **本机 M2 可写码工作量已归零**。
   **不自行改判 tag**：R19 是 PRD 明写验收项，缺真实数据不算通过。
+
+- taskP7 窗口级增强（Windows 优先）（2026-09-15）：提词窗 / 屏幕捕获排除 / 托盘 / 开机自启。
+  设计沿用 `shortcuts.rs` 的「纯逻辑层 + 薄壳层」：CI 开不出真窗口，能钉住的只有决策本身，
+  所以决策全在纯函数里，碰 Tauri 的只有最外层薄壳。
+  + `src-tauri/src/stealth/{mod,overlay}.rs`：独立 `WebviewWindow`（label `teleprompter`），
+    无边框 / 透明 / 置顶 / 跳过任务栏 / 不可聚焦；
+    `plan(Presence, visible, Intent) -> Plan` 钉住「创建→显示→隐藏→销毁→重建」全循环
+    （销毁后再 Show 走回 `Create`，没有单独的「恢复」分支）；
+    `Absent + Hide/Destroy -> AlreadyOk`（不为「隐藏」去建窗口，否则连点两次会先建后隐、屏幕闪一下）。
+    Windows：`SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)` —— 新加
+    `windows-sys 0.61` 的 `Win32_Foundation` + `Win32_UI_WindowsAndMessaging` 两个 feature；
+    tauri 的 `hwnd()` 返回 `windows::Win32::Foundation::HWND(pub *mut c_void)`，
+    而 windows-sys 的 `HWND` 就是 `*mut c_void`，裸指针直传，**不必引入 `windows` crate**。
+    macOS：走 tauri `content_protected(true)`（tao 内部正是
+    `ns_window.setSharingType(NSWindowSharingType::None)`，即任务书写的 `sharingType(.none)`）。
+    Linux：无等价 API，`capture_exclusion_support()` 如实返回 `best_effort`，不做偏门手段。
+    窗口身份靠注入脚本 `window.__INTERVIEW_COPILOT_VIEW__="teleprompter"`
+    （`init_script()` 由 `VIEW_GLOBAL`/`VIEW_VALUE` 派生，前端 `src/lib/windowView.ts`
+    有一份对应常量，两侧各有单测对齐）—— 不用 URL query：`WebviewUrl::App` 收的是 `PathBuf`，
+    把 query 塞进路径跨平台行为不一致；也不用第二个 HTML 入口（要动 Vite `rollupOptions.input`）。
+  + `docs/stealth-boundary.md`（PRD §1.6 边界）：§1「做」列 6 项**操作系统公开的窗口属性**
+    并逐项写效果边界；§2「不做」列 10 项禁止清单（进程伪装 / 进程与模块名混淆 / 反调试 /
+    反检测 / 监考与录屏绕过 / 注入其它进程 / 内核手段 / 改别人的配置 / 超范围键盘记录 /
+    绕过系统安全策略）并逐条写「为什么不做」；§3 写这条线为什么画在这里（合规 / 技术 / 信任）；
+    §4 写清**不承诺**什么；§5 是变更纪律（新能力先登记判定再写码）。
+  + `src-tauri/src/tray.rs`（原为 1 行占位）：`menu(capture_wired)` 纯数据 +
+    `action_for_menu_id` 纯查表 + `main_window_action(visible)` + `close_plan(tray_ready)`。
+    tauri 2.x 内建 `tray-icon`（`tray-icon` **不是默认 feature**，本轮显式开
+    `["tray-icon","image-png","image-ico"]`）；左键显隐主窗，右键菜单三项
+    （显示/隐藏提词窗、开始/停止采集**灰置**、退出）；「最小化到托盘」= 拦
+    `CloseRequested` → `hide()`，但 `tray_ready=false` 时**放行真退出** ——
+    托盘没建起来还把关闭变成隐藏，用户就再也关不掉这个程序（`ClosePlan::Quit`）。
+    采集项**复用 `capture://toggle`** 事件名（不新造名字、不直接调服务，否则
+    「按了没反应」会有两个成因），有断言钉住它等于 `shortcuts::EVT_CAPTURE_TOGGLE`；
+    `CAPTURE_WIRED = false` 灰置（任务书要求），放开只改这一个常量。
+  + `src-tauri/src/autostart.rs` + `commands/settings.rs::{get,set}_autostart`：
+    `tauri-plugin-autostart 2.5.1`。**启动时不注册自启** —— 插件 `setup` 只解析
+    `current_exe()`、**不写注册表**，所以「启动时自启注册失败」这个场景根本不存在；
+    写入只发生在用户拨开关时，失败原样回 UI（`available=false` + 原因），不阻断应用。
+    `view()` 把「读不到」与「确认关闭」分开：读失败**不许**画成「已关闭」。
+    用 `try_state` 而不用 `ManagerExt::autolaunch()`（后者内部是 `state()`，取不到会 panic）。
+  + 前端：`main.tsx` 按注入标记分叉；`pages/TeleprompterWindow.tsx` 是主窗卡片的**镜像**
+    ——**不跑第二份 `useLiveQA`**，否则同一个问题会往 sidecar 发两次检索（一次提问、
+    两份 LLM 调用），两边卡片还会因各自去重状态不同而漂移。
+    做法：`useLiveQA({ broadcast: true })`（只在主窗 LiveQA 页）把算好的 `LiveCard[]`
+    emit 成 `teleprompter://cards`，提词窗只订阅、只渲染。
+    `App.css` 加 `html.overlay-window` 透明覆盖（`:root` 的浅灰会让透明窗口露底）；
+    Settings 加开机自启开关（`available=false` 只加警告样式、**不禁用输入** —— 禁用了连重试都做不到）。
+  DoD 数字：`cargo test --lib` **132 passed / 0 failed**（无 feature）/
+    **143 passed**（`--features audio-testharness`）—— 两者都比基线 +18，
+    即本轮新增 **18 条纯逻辑单测**（`stealth::overlay` 6 + `tray` 8 + `autostart` 4）；
+    `cargo clippy --all-targets -- -D warnings` **0 告警**；
+    `cargo fmt --check` **0**（新代码自带 fmt，未添新债）；
+    `tsc --noEmit` **0**；`eslint src --max-warnings=0` **0**；
+    `vitest run` **158 passed（11 files）**（含新增 `src/lib/windowView.test.ts` 4 条）。
+  人工清单：`docs/manual-verification-p7.md`（A 外观 / B 捕获排除 / C 生命周期 / D 托盘 /
+    E 开机自启，**待用户执行**）。其中 B4 是刻意的**对照实验**：把
+    `apply_capture_exclusion` 改成直接返回 `Unsupported` 重编译，截图里就该**能看见**提词窗
+    —— 否则测的是「透明窗口本来就拍不到内容」这个假命题。
+  **诚实记录**：① A–E 五组**全部未执行**（需要真壳，自动化测试碰不到真窗口 / 真托盘 /
+    真屏幕捕获）；`WDA_EXCLUDEFROMCAPTURE` **只影响捕获、不影响本人观看**，这是设计不是 bug，
+    已写进边界文档 §4 与清单 B3。② macOS 的 `sharingType(.none)` 代码路径就位但
+    **本机无 mac，未验证**。③ Linux 捕获排除**做不到**，如实上报 `best_effort`。
+    ④ 提词窗**不可拖动定位**（`focusable=false` 的代价，刻意：抢焦点会把面试窗口踢到后台，
+    那是本功能最典型的失败方式）；托盘菜单标签固定为「显示/隐藏提词窗」（动态 `set_text`
+    要跨窗口持 `MenuItem` 句柄，不划算）。⑤ `tauri::tray::MouseButtonState` 的 doc 注释
+    把 `Up`/`Down` 写反了（`Up` 的注释写着 "pressed"），当前代码认 `Up`（松开）；
+    若本机行为相反只需改 `tray.rs` 一处，已写进清单 D2 备注。⑥ 主窗「关闭」现在**收进托盘**
+    而不是退出，退出请用托盘右键「退出」（已写进清单 §0 前置）。⑦ 本轮**未提交**：
+    工作树里另有一份不属于本任务的「embedding provider」在途改动
+    （`docs/api-contract.md` 的 HTTP 端点表、`src/pages/Settings.tsx` 的 EmbeddingConfig 接线，
+    另有 8 个未跟踪新文件），与本任务在**同两个文件**里交叉，需按功能切提交，等指示。
+    ⑧ 顺带观察：本会话 `npx tsc --noEmit` / `npx eslint src --max-warnings=0` /
+    `npx vitest run` 都能跑（前一条记录的「本机无 node 未跑三件套」不成立于本 shell），
+    本轮三件套已顺带覆盖到那份在途前端改动（`EmbeddingConfig.test.tsx` 6 条在内）。
+- P5 双 embedding 基建（F5.3/F6.5，2026-09-15）：local bge-512 / cloud text-embedding-3-large-3072。
+  **新增**：`retrieval/embedding.py`（`LocalEmbeddingProvider` 复用 Embedder +
+  `OpenAIEmbeddingProvider` 批量 64/429-5xx 指数退避/usage token 计数日志 +
+  `EMBEDDING_CATALOG` + `check_blob_dim` 维度守卫 + 进程级 active，默认 local，
+  重启回落与 secrets 同内存语义）+ `routers/embedding.py`
+  （`GET /embedding/provider` 当前态 + `POST /embedding/provider` 校验可达后起
+  asyncio 后台重建 + `GET /embedding/rebuild/{id}` downloader 同形进度；重建只写
+  目标表、逐批短事务、成功才 `set_active` 翻转；失败 active 与旧表原样不动）。
+  **接线**：compiler 增 `vec_table`（缺省走 active，新入库与检索同源）、
+  `vector_search` 增 `table`（白名单，未知大声拒）、`answer_stream` 增
+  `vec_table`（缺省走 active，重建期自动走旧表不断链）、`qa._get_embedder`
+  按 active 返回（local 单例原样，cloud 现构造读当前 key，缺 key 走既有
+  warnings 降级）。密钥复用 openai 槽位（与云端 ASR 同源，用户只存一次）。
+  **前端**：`hooks/useEmbedding.ts`（provider 查询重建中自轮询 + 切换 mutation +
+  进度轮询终态即停）+ `components/EmbeddingConfig.tsx`（当前态/目录/切换/
+  重建进度“仍走旧向量+FTS”提示，纯展示 props 直驱可测）+ Settings 新区。
+  数字：`test_embedding.py` + `rebuild_victim.py` **32 passed**
+  （批量切分/退避时钟/成本日志无文本/维度双向守卫/切换全流程/失败不翻转/
+  并发 409/同一循环不断链/SIGKILL 旧表逐行一致 + 目标表全维度正确）；
+  `pytest` **343 passed / 1 skipped**（311 + 32）；`cargo clippy --all-targets`
+  **0 告警**（Rust 零改动，复核性跑）；`api-contract.md` +3 行。
+  真机：`OPENAI_API_KEY` 为空 → `scripts/bench_embedding.py` 按设计
+  `EMBEDDING_DEFERRED=1 reason=no-key` exit 2，`benchmark.md` 记延期台账
+  （有 key 跑 `--n 20` 把 `EMBED_N/EMBED_S/TOKENS` 行贴回即关闭）。
+  **诚实记录**：① 前端三件套本 shell 无 node 未跑——但 taskP7 会话的 shell 有 node，
+  其三件套已顺带覆盖本任务前端改动（`EmbeddingConfig.test.tsx` 6 条在内通过，
+  见上条⑧；系转述，以 taskP7 记录为准）。另修一处必现 bug（`refetchInterval`
+  回调首参是 data 不是 query，旧写法必 crash，已改；三件套通过佐证之）。
+  ② 重启丢弃在途重建（内存语义，目标表残留行维度必正确，下次重跑覆盖）。
+  ③ 旧测试 `test_answer_router.py` 的 `fake_vec` 跟进新 `table` 形参
+  （接口演进的唯一一处旧测改动，另断言默认走 local 表）。
+  ④ **并发改写事故**：本条目首版随上轮提交写入后，被 taskP7 会话的文件改写
+  冲掉（复查时正文已无 P5 条目，仅剩 taskP7 条⑦的旁证），现补回；内容以上轮
+  落盘时为准（后端 32 passed / pytest 343 / clippy 0 均在本轮复验，文件 8 个
+  全在）。与 taskP7 在 `api-contract.md`、`Settings.tsx` 同两文件交叉 +
+  8 个未跟踪新文件——按功能切提交，等指示（同上条⑦）。
+
+- 评测集补至 100 题 + 合成语料扩到真实规模（2026-09-15，用户「逐项执行」第①②项）：
+  **语料**：`sidecar/tests/eval/seed_demo.json` 8 QA + 4 字段 → **108 QA + 29 字段**
+  （6 类目：公司信息 8〔冻结未动〕+ 物流配送/退换货/支付与发票/会员与优惠/产品与规格 各 20）。
+  文件名 `seed_demo` 是历史遗留（首版只有 8 条 demo）；扩库后它就是这个仓的唯一合成语料，
+  **没有另建第二份语料文件**——两个真相源会立刻分叉。入库校验：parse_json→validator 全绿
+  （108/108 valid，0 dup，0 invalid，skipped 0）。
+  **题目**：`questions_100.jsonl` 59 → **100 题（87 scored + 13 应拒答）**；**追加而非重写**，
+  冻结的 59 行逐字节未动（README「冻结后不得为提分而改」）。新增 41 题 = 38 scored
+  （tags real+natural；物流配送 8 / 退换货 8 / 支付与发票 8 / 会员与优惠 7 / 产品与规格 7）
+  + 3 null（tags real+fail-closed：`你们有实体店吗` / `你们有微信公众号吗` / `帮我翻译一下这句话`）。
+  null 占比 **13/100**，落在约定区间 10~15 内。
+  **新增防线**：`test_every_expected_id_resolves_to_the_corpus` —— 题目引用的 `expected_qa_id`
+  必须真在语料里，否则该题**永远不可能命中而 runner 不报错**（Top-3 静默掉分，看起来像检索变差）。
+  扩库与出题是两个动作、两份文件，这条断言把这种静默失败变红。同步 `test_eval.py` 硬编码计数
+  （59/10/39 → 100/13/80，并把 null 占比改成区间断言 10~15 而非定值）。
+  **DoD**：全量 pytest **367 passed / 1 skipped**。扩库前逐条查过 seed 消费者
+  （`test_answer_router` / `test_qa_stream` / `test_llm_providers` / `test_llm_fallback` /
+  `test_diagnostics_degrade`）对 `退货期限`/`量子电动力学xyz` 的行为断言，实测**零回归**
+  （`退货期限 → direct` 仍成立：字段路给同 entity 平权 +3.0，但 jieba/simple 的额外票仍把它顶在 top1）。
+  **v3 基线**（`docs/eval-baseline.md` 新增 `## v3`，全文 465 行；`scripts/eval_baseline.py`
+  支持 `--section v3`，并把硬编码的「8 QA + 4 字段」改为数据驱动、新增 `legacy59` 同题对照
+  与 `gaps` 缺口表）：
+  - 汇总（**仪器变了，与 v2 不可比**）：qa_docs=108；Top-3 **0.862**；Top-5 **0.966**；
+    字段命中 0.632；答了 59 题、**答错 18 题**（率 0.305）；direct 0.370 / FC 0.390；
+    null FC **0.846**（11/13）；全量 1.35s；各路 ms：prep 6.08 / field 0.31 / fts 1.03 /
+    vec 3.14 / embed 2.89 / fuse 0.06。
+  - **旧 59 题同题对照**（同一批题、两种语料规模）：Top-3 **0.980 → 0.796**；Top-5 0.980 → 0.939；
+    答了 23 → 30；**答错 1 → 11**；null FC 1.000 → 0.900。
+  - **结论（重要）**：v2 的「Top-3 0.980 / 答错 1 例 / null 全拒答」**是小语料产物，不是可外推的质量**。
+    这是继 v1→v2「零答错是低召回的副产品」之后第二次同类更正，方向一致：把仪器修对，数字会掉。
+    v3 节把这条写在正文，不藏在脚注。
+  - **三类结构性缺口（四路探针逐条定位，可复现；属 D6 标定范围，本轮一例未修——
+    阈值/权重/匹配逻辑全等于 v2）**：
+    ① **字段路 entity 级联动在真实规模语料下失去区分度**：字段命中把**同 entity 全部 QA**
+       拉到 `s.field=1.0`（不是命中字段本身的 0.8）→「支付与发票」20 篇一律 +3.0/6.0，
+       排序退化为 bm25 噪声：`发票怎么开` 的 top3 挤在 **0.812/0.809/0.809（极差 0.003）**，
+       越过 TH_DIRECT=0.75 进 direct 档。
+    ② **包含匹配对通用疑问词没有防线**：`field_vocab.json` 里 `发货周期` 的别名含 `多久发货`，
+       而 `instr(alias, kw)` 是子串判定 → 关键词 `多久` 命中了 `发货周期` 字段 → 跨 entity 污染，
+       `保修期多久`（期望 eval-093，产品与规格）被 `发货周期`→eval-001（公司信息）拉成
+       **direct @0.797**。`field_lookup` 注释里「词表里没有 `支持`」的论证没有覆盖
+       「词表里的别名**含有**通用疑问词」这一情形。
+    ③ **对抗性 null 的有效期与语料规模绑定**：`有纸质发票吗` 在 8 篇语料下拒答（v2 有记录），
+       在 108 篇的发票题群下变 **direct**。本轮新增的两道对抗 null 均正常拒答 →
+       问题不在「对抗性」，而在「语料里出现了同词族的答案」。
+  - **未做（等指示）**：① `docs/acceptance-m1.md` #6「100 题 Top-3 >85%」的 verdict **未改** ——
+    数值上 0.862 已越线，但同时答错率 0.305，**当场改判成「达标」就是把红线问题包装成关账**
+    （与 §4 拒绝把 49% 包装成关账同一条纪律）；② tag 仍暂缓；③ D6 标定未启动
+    （按 R15 顺序 s_i→w_i→阈值，且须先修 ①② 两条匹配根因，否则调阈值只是把错答从
+    direct 档挪到 maybe 档）。
+  **诚实记录**：① 108 篇里 **62 篇没有对应题目**（纯干扰项）——真实知识库确实如此，
+    但意味着召回指标只覆盖 **46 个 qa_id**，不宣称覆盖全语料；② 新增 5 个类目是我按
+    「电商客服知识库」自拟的，**PRD 不在仓内**（README 已注明），所以「真实规模」的
+    **规模数值（8→108）是我拍的**，依据是 eval-baseline 自带的 idf 论证（N=8 单词命中
+    idf=ln(5.0)≈1.61 → N=108 时 ln(107.5/1.5)≈4.27，塌缩消除）；若 PRD 另有规模规定，
+    改数字只是改语料，不动引擎；③ 探针脚本用完即删未入仓，复现路径 =
+    `scripts/eval_baseline.py` + `field_vocab.json` 别名表。
+
+## 测试计数台账（F 项，2026-09-15 立；**此后每次任务更新此节**）
+
+> 立此节的起因：`229+39=268 ≠ 281`、`281+19+1=301 ≠ 311`、`89+31=120 ≠ 142`、
+> `142 ≠ 148` 四处记账漂移。**结论先行：四处均无法精确归因**（原因见 §3），
+> 防再漂移靠 §4 的纪律，不靠补算。
+
+### 1. 当前全量（2026-09-15 16:07，`720de4c` + P8 在途）
+
+- `pytest --collect-only -q` → **367 collected**；全量 `pytest` → **367 passed / 1 skipped**
+- `vitest run` → **159 passed / 11 files**
+
+**1 skipped 的原因（E 项）**：唯 `webrtcvad` 可选依赖缺失时跳过一条 VAD 相关用例
+（导入期 `skipif` 判定）。与 C1b 行记录的 skip **同源**，**不是失败、不是漏测**；
+B 机装了 `webrtcvad-wheels` 故为 0 skipped —— 这就是 A/B 两机 skipped 数不同的全部原因。
+
+**pytest per-file（collected）**：`test_llm_providers` 39 / `test_embedding` 32 /
+`test_import_p1` 29 / `test_asr_fallback` 25 / `test_query_prep` 19 /
+`test_audio_protocol` 17 / `test_llm_fallback` 15 / `test_audio_eval` 15 /
+`test_local_agreement` 13 / `test_asr_text_clean` 13 / `test_sherpa_providers` 11 /
+`test_low_latency` 10 / (`test_retrieval` `test_migrations` `test_diagnostics_degrade`
+`test_asr_switch` `test_answer_router`) 各 8 / (`test_providers` `test_knowledge_compiler`
+`test_hybrid_rank` `test_connection`) 各 7 / `test_qa_stream` 6 / (`test_vector_search`
+`test_simple_extension` `test_routers` `test_prompt_guard` `test_model_download`
+`test_downloader` `test_auth`) 各 5 / (`test_settings` `test_embedder` `test_diagnostics`)
+各 4 / `tests/eval/test_eval` 3 / `test_auth_coverage` 2 / (`test_rollback` `test_health`
+`tests/eval/test_eval_full`) 各 1。
+
+**vitest per-file**：trigger 50 / liveqa 30 / capture 28 / importFlow 15 / api 7 /
+ReviewPanel 6 / EmbeddingConfig 6 / ColumnMapping 5 / Knowledge 4 / windowView 4 / sse 4 = **159**。
+
+### 2. 四处漂移的归属（A–D 项）
+
+| 项 | 记账 | 观测 | 可验证的归属 | 残差 |
+|---|---|---|---|---|
+| A | 229 + 39 = 268 → 记 **281** | +52 | `552f2b4` 新增 `test_llm_providers.py`（**39** collected）+ `test_import_p1.py`（**29** collected）= 68 | **−16 不可归因** |
+| B | 281 + 19 + 1 = 301 → 记 **311** | +30 | `37af550` 新增 `test_query_prep.py`（**19**）+ `test_retrieval.py` / `test_answer_router.py` 改动 | **+10 不可归因** |
+| C | 89 + 31 = 120 → 记 **142** | +53 | `552f2b4` 新增 vitest 5 文件（ColumnMapping 5 / ReviewPanel 6 / importFlow 15 / Knowledge 4 / api +1）= **31**，与「新增 31」自洽 | **+22 不可归因** |
+| D | 142 → **148** | +6 | `2936f25` 新增 `src/lib/capture.test.ts`（现 28 条） | **量级不符（28 ≠ 6）** |
+
+**A 项更正（重要）**：**不是「P2 的 Excel/PDF 测试真没做」** —— **做了**，只是
+**没有独立 `test_excel*.py` / `test_pdf*.py`**，而并进了 `sidecar/tests/test_import_p1.py`
+（29 条 = excel 11 + pdf 10 + import 校验 1 + 其余 7）；源码
+`knowledge/parsers/excel_parser.py` / `pdf_parser.py` 均在仓，`data_only=True` 与公式注入
+清洗均在（`excel_parser.py:107-109` 有注释）。**故 A 项不转 mini-fix，改为「归属更正」。**
+
+### 3. 残差为什么不可精确归因（不猜）
+
+- 历史树**无法复现 collect-only**：独立 worktree 里跑恒得
+  `29 tests collected, 8 errors`（`ModuleNotFoundError: No module named 'knowledge'/'core'/'app'`），
+  **与 checkout 到哪个提交无关** → worktree 环境问题（`sidecar/src` 路径注入失效 / ignored
+  依赖缺位），加 `PYTHONPATH=<wt>/sidecar/src` 亦无效。
+- 当时**没有留 per-file 快照**，只有总数。
+- 故：**只报可验证的归属，残差如实记为「不可归因」**，不用推测填平。
+
+### 4. 纪律（此后每次任务）
+
+1. 每次全量跑，把 `passed/skipped` **连同 per-file 计数**一并记入本节
+   （`pytest --collect-only -q | grep "::" | sed 's|::.*||' | sort | uniq -c`；
+   vitest 用 `--reporter=verbose | grep "✓"`）。
+2. 记账里的「+N」**必须写明归属到哪个文件**，不写文件不算记账。
+3. 跨机数字**必须带机器名**（A 机 skip 1 / B 机 skip 0 即例）。
+
+### 5. 本轮收口（J ✅ / K ✅ / I ⛔ 阻塞于并发写入）
+
+- **I 项**：`api-contract.md` 鉴权覆盖表补记 —— **有意不做**：该文件正被 P8 会话
+  并发写入（16:02 mtime），此时改会撞车。转待办：P8 落定后补
+  `GET /llm/providers`、`POST /knowledge/import/preview|commit`、
+  `GET|POST /embedding/provider`、`GET /embedding/rebuild/{id}`
+  （注：`GET /diagnostics/degrade` 已由 P8 自行加入 `test_auth_coverage.py`）。
+- **J 项**：P2 验收点 —— **五项全部查证完毕，无一项转 mini-fix**：
+
+  | # | 验收点 | 结论 | 证据 |
+  |---|---|---|---|
+  | 1 | `data_only=True` 注释在否 | **在** | `sidecar/src/knowledge/parsers/excel_parser.py:107-109` |
+  | 2 | PDF 单栏口径在否 | **在**（口径写死为单栏，不做分栏推断） | `pdf_parser.py` + `test_import_p1.py` 中 PDF 10 条用例 |
+  | 3 | 恶意 Excel 测试存在否 | **在** | `test_excel_formula_and_injection_protection` |
+  | 4 | `openpyxl`/`pypdf` 在 lock 否 | **均在** | `requirements-lock.txt:30 openpyxl==3.1.5`、`:37 pypdf==6.18.1` |
+  | 5 | `F6.1` 笔误是否改 `F4.x` | **不改，保留 `F6.1`** | 全仓 `git grep "F4\.[0-9]"` **零命中**；`F6.1` 稳定出现在 **9 个已跟踪文件**（`provider.py` / `settings.py` / `test_llm_providers.py` / `Settings.tsx` / `e2e_llm.py` / `api-contract.md`×2 / `benchmark.md` / `PROGRESS.md`）。**`F4.x` 这个编号在仓内不存在**，故「笔误」一说不成立 —— 该疑问作废，不需改动。 |
+- **K 项**：`acceptance-m2.md` 增 **§7 延期台账**节 —— **已做**（2026-09-15）。
+  内容：7.1 M2 四项（R19 录音 / G1（含「云端 key 路径待主人」+ 凭据纪律警告）/
+  M2-13 双平台 / M2-12 壳），每项写明**阻塞于谁 + 可判定的解除条件 + 解除后第一件事**；
+  7.2 1b-HK 残项（`dist-sidecar` 重建、CI Python 3.11 matrix）；7.3 已闭合留痕
+  （M2-7 / `cargo fmt` / task-14 403），防复活。
+
+### 6. 本轮 G0 切分提交序列（在途改动落账，2026-09-15）
+
+起点 `bef42d7`（工作区堆着四批在途改动），切分为三批功能提交，**之后接一个 chore 提交**：
+
+| 提交 | 批次 | 文件数 | 说明 |
+|---|---|---|---|
+| `0356f40` | **taskP7 窗口级增强** | 20（+1628/−22） | `stealth/{mod,overlay}.rs` / `tray.rs` / `autostart.rs` / `commands/{mod,window,settings}.rs` / `lib.rs` / `Cargo.{toml,lock}` / `capabilities/default.json` / `windowView.ts(+test)` / `TeleprompterWindow.tsx` / `main.tsx` / `App.css` / `useLiveQA.ts` / `LiveQA.tsx` / `manual-verification-p7.md` / `stealth-boundary.md` |
+| `6bebd78` | **P5 双 embedding 基建** | 13（+1774/−7） | `retrieval/embedding.py` / `routers/embedding.py` / `useEmbedding.ts` / `EmbeddingConfig.tsx(+test)` / `test_embedding.py` / `rebuild_victim.py` / `bench_embedding.py` / `compiler.py` / `vector_search.py` / `test_answer_router.py` / `test_auth_coverage.py` / `app.py`。**已知 1 行 P8 顺带**：`test_auth_coverage.py` 里的 `("GET","/diagnostics/degrade",None)` 已写入提交说明 |
+| `720de4c` | **评测集补至 100 题 + 语料扩到真实规模（v3）** | 6 | `seed_demo.json` / `questions_100.jsonl` / `test_eval.py` / `eval_baseline.py` / `eval-baseline.md` / `eval-v3-summary.json`。**标签刻意不写 `P8:`**（P8 是本会话在途任务，撞名会误导） |
+
+**未切分、有意保留在途（P8 会话）**：`src/pages/Settings.tsx`（16:01 mtime）、
+`docs/api-contract.md`（16:02）—— 两文件含 **P7 + P5 + P8 行级交错 hunk**，
+且 P8 当时**正在写入**。此时做 hunk 切分既有误归属风险，也会复现此前
+「重置工作区覆盖并发会话改动」的事故（S2 配方要临时重写工作区，已明确弃用）。
+故**只做 index-only 归属**，共享文件留给 P8 落定后处理。
+
+**P8 在途文件（本会话全程未碰）**：`src-tauri/src/security/{fallback,keychain}.rs`、
+`sidecar/src/{generation/router.py,asr/runtime.py,routers/qa.py,routers/settings.py}`、
+`src/lib/{liveqa,qa}.ts(+test)`、`src/pages/Search.tsx`、
+`sidecar/src/diagnostics/degrade.py`、`sidecar/src/generation/fallback.py`、
+`sidecar/tests/{test_qa_stream,test_diagnostics_degrade,test_llm_fallback}.py`、`docs/benchmark.md`。
