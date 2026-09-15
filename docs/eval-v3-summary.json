@@ -1,0 +1,200 @@
+{
+  "n": 100,
+  "qa_docs": 108,
+  "scored": 87,
+  "null_items": 13,
+  "top3_rate": 0.8620689655172413,
+  "top5_rate": 0.9655172413793104,
+  "field_hit_rate": 0.632183908045977,
+  "answered": 59,
+  "wrong_answers": 18,
+  "wrong_answer_rate": 0.3050847457627119,
+  "direct_rate": 0.37,
+  "fail_closed_rate": 0.39,
+  "null_fail_closed_rate": 0.8461538461538461,
+  "actions": {
+    "direct": 37,
+    "fail_closed": 39,
+    "maybe_multi": 14,
+    "maybe_single": 10
+  },
+  "avg_ms": {
+    "prep": 5.9022499999264255,
+    "field": 0.3186889999778941,
+    "fts": 1.0394610001094406,
+    "vec": 3.146039999992354,
+    "embed": 2.737145999853965,
+    "fuse": 0.05278700002236292
+  },
+  "elapsed_s": 1.3212218999979086,
+  "stats": {
+    "qa_inserted": 108,
+    "qa_updated": 0,
+    "qa_skipped": 0,
+    "fields_upserted": 29,
+    "aliases_written": 10,
+    "field_overwritten": 0,
+    "vec_written": 108,
+    "vocab_miss": 26
+  },
+  "tmp": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\baseline-nk14jh9p",
+  "corpus": {
+    "qa": 108,
+    "fields": 29,
+    "entities": [
+      "公司信息",
+      "物流配送",
+      "退换货",
+      "支付与发票",
+      "会员与优惠",
+      "产品与规格"
+    ]
+  },
+  "legacy59": {
+    "n": 59,
+    "scored": 49,
+    "null_items": 10,
+    "top3_rate": 0.7959183673469388,
+    "top5_rate": 0.9387755102040817,
+    "answered": 30,
+    "wrong_answers": 11,
+    "null_fail_closed_rate": 0.9
+  },
+  "gaps": {
+    "wrong_direct": [
+      {
+        "q": "发票怎么开",
+        "expected": "eval-006",
+        "got": "eval-055",
+        "score": 0.8119674502290426
+      },
+      {
+        "q": "电子发票",
+        "expected": "eval-006",
+        "got": "eval-058",
+        "score": 0.8162073821793779
+      },
+      {
+        "q": "运费怎么收的",
+        "expected": "eval-012",
+        "got": "eval-038",
+        "score": 0.8000879803662141
+      },
+      {
+        "q": "退款是退到哪个账户",
+        "expected": "eval-034",
+        "got": "eval-043",
+        "score": 0.7822595697319414
+      },
+      {
+        "q": "保修期多久",
+        "expected": "eval-093",
+        "got": "eval-001",
+        "score": 0.7973582120669187
+      }
+    ],
+    "wrong_maybe": [
+      {
+        "q": "我下单之后要等几天才发货？",
+        "expected": "eval-001",
+        "got": "eval-002",
+        "score": 0.6469037143105343,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "发货快不快？",
+        "expected": "eval-001",
+        "got": "eval-011",
+        "score": 0.6543052378699589,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "退货的话运费谁出？",
+        "expected": "eval-002",
+        "got": "eval-038",
+        "score": 0.6556257943883519,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "七天无理由是真的吗？",
+        "expected": "eval-002",
+        "got": "eval-039",
+        "score": 0.6463706363189947,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "怎么打你们客服？",
+        "expected": "eval-003",
+        "got": "eval-008",
+        "score": 0.6553188188542994,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "平时用微信支付行不行",
+        "expected": "eval-005",
+        "got": "eval-049",
+        "score": 0.6448262754136306,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "发票抬头怎么填",
+        "expected": "eval-006",
+        "got": "eval-057",
+        "score": 0.6575792535023083,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "开票需要备注什么",
+        "expected": "eval-006",
+        "got": "eval-068",
+        "score": 0.6537101716214391,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "怎么开电子发票",
+        "expected": "eval-006",
+        "got": "eval-058",
+        "score": 0.6560634281734488,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "你们一般发哪家快递",
+        "expected": "eval-010",
+        "got": "eval-011",
+        "score": 0.6534826739165857,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "新疆能发货吗",
+        "expected": "eval-013",
+        "got": "eval-001",
+        "score": 0.6454432910986034,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "发货之后大概几天能到",
+        "expected": "eval-015",
+        "got": "eval-002",
+        "score": 0.6469037143105343,
+        "action": "maybe_multi"
+      },
+      {
+        "q": "可以加急发货吗",
+        "expected": "eval-020",
+        "got": "eval-007",
+        "score": 0.6556509596277135,
+        "action": "maybe_multi"
+      }
+    ],
+    "null_open": [
+      {
+        "q": "有纸质发票吗",
+        "action": "direct"
+      },
+      {
+        "q": "帮我翻译一下这句话",
+        "action": "maybe_single"
+      }
+    ]
+  }
+}

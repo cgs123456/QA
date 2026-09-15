@@ -1,4 +1,10 @@
-"""eval 骨架单测：loader 校验 + runner 在 demo 种子上跑通."""
+"""eval 骨架单测：loader 校验 + runner 在合成语料上跑通。
+
+语料规模（2026-09-15 扩库）：seed_demo.json 由 8 QA 扩到 **108 QA + 29 字段**
+（6 类目），题目由 59 补到 **100 题（87 scored + 13 应 Fail-Closed）**。
+文件名 seed_demo 是历史遗留（首版只有 8 条 demo），扩库后它就是这个仓库的
+唯一合成语料 —— 没有另建第二份语料文件，避免出现两个真相源。
+"""
 
 import json
 import sys
@@ -32,10 +38,13 @@ def _seed_demo(db):
 
 def test_loader_schema_and_errors(tmp_path):
     items = load_eval_items(EVAL_DIR / "questions_100.jsonl")
-    assert len(items) == 59
+    assert len(items) == 100
     assert all(isinstance(it, EvalItem) for it in items)
-    assert sum(1 for it in items if it.expected_qa_id is None) == 10
-    assert sum(1 for it in items if "real" in it.tags) == 39
+    # null 题（应 Fail-Closed）占比必须留在 10~15/100 —— 这是评测集的口径约束，
+    # 不是分数线：null 太少则红线没被压测，太多则命中率失去统计意义。
+    n_null = sum(1 for it in items if it.expected_qa_id is None)
+    assert 10 <= n_null <= 15
+    assert sum(1 for it in items if "real" in it.tags) == 80
 
     bad = tmp_path / "bad.jsonl"
     bad.write_text('{"question": "", "expected_qa_id": "x"}\n', encoding="utf-8")
@@ -43,13 +52,29 @@ def test_loader_schema_and_errors(tmp_path):
         load_eval_items(bad)
 
 
+def test_every_expected_id_resolves_to_the_corpus():
+    """题目引用的 expected_qa_id 必须真在语料里。
+
+    扩库/出题是两份文件、两个动作：一旦题目引用了语料里不存在的 id，
+    该题**永远不可能命中**，而 runner 不会报错 —— Top-3 会静默掉分，
+    看起来像"检索变差了"。这条断言把这种静默失败变成红色。
+    """
+    seed = json.loads((EVAL_DIR / "seed_demo.json").read_text(encoding="utf-8"))
+    corpus_ids = {q["id"] for q in seed["qa_pairs"]}
+    items = load_eval_items(EVAL_DIR / "questions_100.jsonl")
+    dangling = sorted(
+        {it.expected_qa_id for it in items if it.expected_qa_id is not None} - corpus_ids
+    )
+    assert dangling == [], f"题目引用了语料里不存在的 qa_id：{dangling}"
+
+
 def test_runner_on_demo_seed(db):
     sid = _seed_demo(db)
     items = load_eval_items(EVAL_DIR / "questions_100.jsonl")
     summary = evaluate(db, sid, items)
-    assert summary["n"] == 59
-    assert summary["scored"] == 49
-    assert summary["null_items"] == 10
+    assert summary["n"] == 100
+    assert summary["scored"] == 87
+    assert summary["null_items"] == 13
     # 命中率 verdict 在 docs/eval-baseline.md（如实记录，不在单测里定分数线，
     # 防止“为过单测而调题/调阈值”的自我交易）；单测只锁结构与有效性。
     assert 0.0 <= summary["top3_rate"] <= 1.0
