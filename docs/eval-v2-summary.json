@@ -1,0 +1,41 @@
+{
+  "n": 59,
+  "qa_docs": 8,
+  "scored": 49,
+  "null_items": 10,
+  "top3_rate": 0.9795918367346939,
+  "top5_rate": 0.9795918367346939,
+  "field_hit_rate": 0.4489795918367347,
+  "answered": 23,
+  "wrong_answers": 1,
+  "wrong_answer_rate": 0.043478260869565216,
+  "direct_rate": 0.2542372881355932,
+  "fail_closed_rate": 0.6101694915254238,
+  "null_fail_closed_rate": 1.0,
+  "actions": {
+    "direct": 15,
+    "fail_closed": 36,
+    "maybe_multi": 4,
+    "maybe_single": 4
+  },
+  "avg_ms": {
+    "prep": 9.415411864318816,
+    "field": 0.25454406799542345,
+    "fts": 0.5652338984226059,
+    "vec": 2.6744406779348,
+    "embed": 2.626189830507274,
+    "fuse": 0.041911864327168154
+  },
+  "elapsed_s": 0.9198954999992566,
+  "stats": {
+    "qa_inserted": 8,
+    "qa_updated": 0,
+    "qa_skipped": 0,
+    "fields_upserted": 4,
+    "aliases_written": 10,
+    "field_overwritten": 0,
+    "vec_written": 8,
+    "vocab_miss": 1
+  },
+  "tmp": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\baseline-kznv1dwi"
+}

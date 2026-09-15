@@ -10,6 +10,7 @@
 
 from retrieval.field_lookup import field_lookup
 from retrieval.fts5_search import fts5_search
+from retrieval.query_prep import prepare
 from retrieval.hybrid_rank import decide, fuse
 from retrieval.vector_search import vector_search
 
@@ -53,8 +54,11 @@ async def answer_stream(conn, store_id: str, question: str, llm, embed_fn):
     路径绝不触碰 llm（单测以调用计数断言）。
     """
     question = (question or "").strip()
-    field = field_lookup(conn, store_id, question) if question else []
-    fts = fts5_search(conn, store_id, question) if question else []
+    # 查询预处理一次、两路共用：字段路的包含匹配与 FTS 路的关键词必须同源
+    # （各算一遍可能因分词抖动给出不同的关键词，那种分歧无法复现）。
+    prep = prepare(conn, question) if question else None
+    field = field_lookup(conn, store_id, question, prepared=prep) if question else []
+    fts = fts5_search(conn, store_id, question, prepared=prep) if question else []
     vec = []
     warnings = []
     if question:

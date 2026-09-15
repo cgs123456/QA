@@ -1,0 +1,36 @@
+{
+  "n": 59,
+  "qa_docs": 8,
+  "scored": 49,
+  "null_items": 10,
+  "top3_rate": 0.4897959183673469,
+  "top5_rate": 0.4897959183673469,
+  "field_hit_rate": 0.061224489795918366,
+  "direct_rate": 0.05084745762711865,
+  "fail_closed_rate": 0.9322033898305084,
+  "null_fail_closed_rate": 1.0,
+  "actions": {
+    "maybe_single": 1,
+    "fail_closed": 55,
+    "direct": 3
+  },
+  "avg_ms": {
+    "field": 0.1055372881714671,
+    "fts": 9.312132203422923,
+    "vec": 2.437466101690592,
+    "embed": 2.695300000041089,
+    "fuse": 0.017123728774372543
+  },
+  "elapsed_s": 0.8601472000000285,
+  "stats": {
+    "qa_inserted": 8,
+    "qa_updated": 0,
+    "qa_skipped": 0,
+    "fields_upserted": 4,
+    "aliases_written": 10,
+    "field_overwritten": 0,
+    "vec_written": 8,
+    "vocab_miss": 1
+  },
+  "tmp": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\baseline-8a7li8xv"
+}

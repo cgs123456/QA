@@ -55,7 +55,7 @@ def test_runner_on_demo_seed(db):
     assert 0.0 <= summary["top3_rate"] <= 1.0
     assert 0.0 <= summary["top5_rate"] <= 1.0
     assert summary["top5_rate"] >= summary["top3_rate"]
-    assert set(summary["avg_ms"]) == {"field", "fts"}
+    assert set(summary["avg_ms"]) == {"prep", "field", "fts"}
     missed = [
         (d["question"], d["ranked_top3"])
         for d in summary["details"]

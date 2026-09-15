@@ -41,7 +41,7 @@ def test_evaluate_full_structure(db):
     for key in ("top3_rate", "top5_rate", "direct_rate", "fail_closed_rate",
                 "null_fail_closed_rate"):
         assert 0.0 <= s[key] <= 1.0
-    assert set(s["avg_ms"]) == {"field", "fts", "vec", "embed", "fuse"}
+    assert set(s["avg_ms"]) == {"prep", "field", "fts", "vec", "embed", "fuse"}
     assert all(v >= 0.0 for v in s["avg_ms"].values())
     assert set(s["actions"]) <= {"direct", "maybe_single", "maybe_multi", "fail_closed"}
     # stub 向量恒为 e1 → f1 的 vec 路确定性命中。

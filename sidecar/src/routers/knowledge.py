@@ -20,6 +20,7 @@ from knowledge.parsers.markdown_parser import parse_markdown
 from knowledge.validator import validate_field_items, validate_qa_items
 from retrieval.field_lookup import field_lookup
 from retrieval.fts5_search import fts5_search
+from retrieval.query_prep import prepare
 
 router = APIRouter()
 
@@ -108,18 +109,24 @@ def knowledge_search(q: str, store_id: str | None = None):
         except stores.StoreNotFound:
             raise HTTPException(status_code=404, detail="store not found")
 
+    # 与生产回答路径同源：预处理一次、两路共用（诊断端点要能复现真实检索行为）。
     t0 = time.perf_counter()
-    field_hits = field_lookup(conn, store_id, q)
+    prep = prepare(conn, q)
+    t_prep = (time.perf_counter() - t0) * 1000
+
+    t0 = time.perf_counter()
+    field_hits = field_lookup(conn, store_id, q, prepared=prep)
     t_field = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
-    fts_hits = fts5_search(conn, store_id, q)
+    fts_hits = fts5_search(conn, store_id, q, prepared=prep)
     t_fts = (time.perf_counter() - t0) * 1000
 
     return {
         "store_id": store_id,
         "query": q,
+        "keywords": list(prep.keywords),
         "field_hits": field_hits,
         "fts_hits": fts_hits,
-        "timings_ms": {"field": t_field, "fts": t_fts},
+        "timings_ms": {"prep": t_prep, "field": t_field, "fts": t_fts},
     }

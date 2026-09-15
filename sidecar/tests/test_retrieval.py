@@ -116,12 +116,16 @@ def test_structural_fts_errors_are_loud():
     """缺表/缺扩展必须上抛（绝不静默转 Fail-Closed）；纯语法问题才兜底 []。"""
     import sqlite3
 
-    from retrieval.fts5_search import _search_route
+    from retrieval.fts5_search import _match_expression, _search_route
 
     bare = sqlite3.connect(":memory:")
     try:
+        # 未加载扩展：取 MATCH 表达式这一步就该 loud（no such function）。
         with pytest.raises(sqlite3.OperationalError):
-            _search_route(bare, "s", "发货", "jieba_query", "jieba", 5)
+            _match_expression(bare, "jieba_query", "发货")
+        # 有扩展但缺表：检索这一步 loud（no such table）。
+        with pytest.raises(sqlite3.OperationalError):
+            _search_route(bare, "s", '"发货"', "jieba", 5)
     finally:
         bare.close()
 
@@ -130,5 +134,5 @@ def test_match_syntax_error_returns_empty(db):
     from retrieval.fts5_search import _search_route
 
     sid = _seed(db)
-    # 不存在的查询函数 → SQLITE_ERROR 语法类 → 兜底 []。
-    assert _search_route(db, sid, "发货", "no_such_fn_xyz", "jieba", 5) == []
+    # 表达式本身语法错（悬空 AND）→ SQLITE_ERROR 语法类 → 兜底 []，不炸整条请求。
+    assert _search_route(db, sid, '"发货" AND', "jieba", 5) == []

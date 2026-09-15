@@ -98,7 +98,9 @@ async def test_empty_question_fail_closed(demo_db):
 
 
 @pytest.mark.anyio
-async def test_maybe_single_streams_with_top1_context(monkeypatch):
+async def test_maybe_single_streams_with_top1_context(monkeypatch, db):
+    """`db` 必需：路由会先 `prepare(conn, question)` 取关键词（用扩展分词），
+    连接不能是 None —— 三路虽然被打桩，但预处理是真的。"""
     import generation.router as router_mod
 
     def _hit(qid, text, s, route):
@@ -117,7 +119,7 @@ async def test_maybe_single_streams_with_top1_context(monkeypatch):
         lambda *a, **k: [dict(_hit("a", "标准答案甲。", 0.9, "vec"))],
     )
     fake = FakeProvider()
-    events = [e async for e in router_mod.answer_stream(None, "s", "测试问题", fake, _zeros)]
+    events = [e async for e in router_mod.answer_stream(db, "s", "测试问题", fake, _zeros)]
     kinds = [e["type"] for e in events]
     assert kinds == ["decision", "sources", "chunk", "chunk", "done"]
     assert events[0]["action"] == "maybe_single"
@@ -132,17 +134,18 @@ async def test_maybe_single_streams_with_top1_context(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_maybe_multi_context_top2(monkeypatch):
+async def test_maybe_multi_context_top2(monkeypatch, db):
     import generation.router as router_mod
 
     def _hit(qid, text, s):
         return {"qa_id": qid, "standard_question": "Q", "official_answer": text,
                 "category": "E", "s": s}
 
-    def fake_field(conn, store_id, query, limit=5):
+    # 打桩签名要带上 `prepared`：路由把同一份预处理结果透传给两路（关键词同源）。
+    def fake_field(conn, store_id, query, limit=5, prepared=None):
         return []
 
-    def fake_fts(conn, store_id, query, top_k=5):
+    def fake_fts(conn, store_id, query, top_k=5, prepared=None):
         return [dict(_hit("a", "答案甲", 0.9), route="jieba"),
                 dict(_hit("b", "答案乙", 0.89), route="jieba"),
                 dict(_hit("a", "答案甲", 0.9), route="simple"),
@@ -159,7 +162,7 @@ async def test_maybe_multi_context_top2(monkeypatch):
     # fts 命中按 route 分发给 jieba/simple 两路；vec 同理 →
     # a:2.7/6=0.45，b:2.67/6=0.445，gap 0.005 → maybe_multi。
     fake = FakeProvider()
-    result = await router_mod.answer(None, "s", "测试问题", fake, _zeros)
+    result = await router_mod.answer(db, "s", "测试问题", fake, _zeros)
     assert result["type"] == "llm"
     assert len(result["sources"]) == 2
     assert len(fake.calls) == 1
@@ -168,7 +171,7 @@ async def test_maybe_multi_context_top2(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_llm_error_path(monkeypatch):
+async def test_llm_error_path(monkeypatch, db):
     import generation.router as router_mod
 
     def _hit(qid, text, s, route):
@@ -187,7 +190,7 @@ async def test_llm_error_path(monkeypatch):
         lambda *a, **k: [dict(_hit("a", "标准答案甲。", 0.9, "vec"))],
     )
     fake = FakeProvider(error=ProviderError("timeout", "x 超时（30.0s）"))
-    result = await router_mod.answer(None, "s", "测试问题", fake, _zeros)
+    result = await router_mod.answer(db, "s", "测试问题", fake, _zeros)
     assert result["type"] == "error"
     assert result["text"] == ERROR_TEXT
     assert result["error"] == "timeout"
