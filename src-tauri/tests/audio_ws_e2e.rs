@@ -20,9 +20,8 @@
 //! Set `INTERVIEWCOPILOT_SKIP_E2E=1` to skip (needs a Python interpreter with the
 //! sidecar's dependencies on PATH, or `INTERVIEWCOPILOT_PYTHON`).
 
-use std::io::{BufRead, BufReader};
-use std::net::TcpListener;
-use std::process::{Child, Command, Stdio};
+mod support;
+
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -31,10 +30,7 @@ use interview_copilot_lib::audio::uplink::{
     AudioUplink, EventSink, PathLabel, UplinkConfig, UplinkError,
 };
 use serde_json::{json, Value};
-
-const TOKEN: &str = "e2e-token-abcdefghijklmnopqrstuvwxyz012345";
-const NONCE: &str = "audio-e2e";
-const START_TIMEOUT: Duration = Duration::from_secs(30);
+use support::real_sidecar::{skipped, start_sidecar, TOKEN};
 
 #[derive(Default)]
 struct RecordingSink {
@@ -69,107 +65,6 @@ impl EventSink for RecordingSink {
             .unwrap()
             .push((event.to_string(), payload));
     }
-}
-
-/// Kills the sidecar even if the test panics.
-struct Sidecar {
-    child: Child,
-    port: u16,
-}
-
-impl Drop for Sidecar {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn repo_root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("src-tauri has a parent")
-        .to_path_buf()
-}
-
-fn python_exe() -> String {
-    std::env::var("INTERVIEWCOPILOT_PYTHON").unwrap_or_else(|_| "python".to_string())
-}
-
-fn free_port() -> u16 {
-    let l = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
-    let port = l.local_addr().unwrap().port();
-    drop(l);
-    port
-}
-
-/// Spawn uvicorn and wait until `/health` echoes our nonce (TOCTOU-safe, same
-/// discipline as the shell's supervisor).
-async fn start_sidecar(extra_args: &[&str]) -> Option<Sidecar> {
-    let root = repo_root();
-    let script = root.join("scripts").join("serve_audio_e2e.py");
-    if !script.is_file() {
-        eprintln!("SKIP: {} not found", script.display());
-        return None;
-    }
-    let port = free_port();
-    let mut cmd = Command::new(python_exe());
-    cmd.arg(&script)
-        .arg("--port")
-        .arg(port.to_string())
-        .arg("--token")
-        .arg(TOKEN)
-        .arg("--nonce")
-        .arg(NONCE);
-    for a in extra_args {
-        cmd.arg(a);
-    }
-    let mut child = match cmd
-        .current_dir(&root)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("SKIP: cannot spawn python ({}): {e}", python_exe());
-            return None;
-        }
-    };
-
-    // Surface the server's stderr if it dies during startup.
-    let stderr = child.stderr.take().map(BufReader::new);
-
-    let url = format!("http://127.0.0.1:{port}/health");
-    let client = reqwest::Client::new();
-    let deadline = Instant::now() + START_TIMEOUT;
-    while Instant::now() < deadline {
-        if let Ok(resp) = client.get(&url).send().await {
-            if let Ok(body) = resp.json::<Value>().await {
-                if body.get("status").and_then(Value::as_str) == Some("ok")
-                    && body.get("nonce").and_then(Value::as_str) == Some(NONCE)
-                {
-                    return Some(Sidecar { child, port });
-                }
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    let mut detail = String::new();
-    if let Some(mut r) = stderr {
-        let mut line = String::new();
-        while r.read_line(&mut line).unwrap_or(0) > 0 {
-            detail.push_str(&line);
-            line.clear();
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    panic!("sidecar never became healthy on port {port}; stderr:\n{detail}");
-}
-
-fn skipped() -> bool {
-    std::env::var("INTERVIEWCOPILOT_SKIP_E2E").is_ok()
 }
 
 #[tokio::test]

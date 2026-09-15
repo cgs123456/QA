@@ -140,6 +140,17 @@ def last_counters() -> dict | None:
     return _LAST_COUNTERS
 
 
+# 当前在连的连接（accept 时加入、finally 时移除）。
+# 诊断面板的 `capture` 段要的是"现在有没有人在推音频"——这是 sidecar 唯一
+# 真正看得见的东西（Rust 采集侧的设备名/自检结论它看不见，也不该编造）。
+_ACTIVE: set = set()
+
+
+def active_paths() -> list:
+    """当前在连的音频路（已报出 path 的那些；刚连上还没发 segment_start 的不计）。"""
+    return sorted({c.path for c in _ACTIVE if c.path})
+
+
 def _new_counters() -> dict:
     return {
         "malformed": 0,
@@ -451,6 +462,7 @@ async def audio_stream(websocket: WebSocket):
         return
     await websocket.accept()
     conn = _Conn(websocket)
+    _ACTIVE.add(conn)
     try:
         while conn.alive:
             try:
@@ -473,4 +485,5 @@ async def audio_stream(websocket: WebSocket):
                 break
     finally:
         conn.alive = False
+        _ACTIVE.discard(conn)
         _LAST_COUNTERS = conn.counters

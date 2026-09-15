@@ -10,8 +10,15 @@
 //! - [`cpal_monitor`] (Linux): PulseAudio monitor pick.
 //! - [`wasapi_loopback`] (Windows): default render-device loopback.
 //! - [`vad`]: the `Vad` trait, the webrtc-vad provider, and the silero stub.
+//! - [`endpoint`]: the frozen segment-endpoint state machine (M2-7) —
+//!   decisions in, `segment_start` / `segment_end` out.
 //! - [`uplink`]: the WS client to the sidecar's `/audio/stream` (R9–R14) and
 //!   the downlink → Tauri event bridge.
+//! - [`service`]: the capture service — one VAD worker thread per path,
+//!   endpoint wiring, startup self-check, and the `capture://toggle` consumer.
+//! - [`synthetic`] (`audio-testharness` only): the injection test harness —
+//!   a WAV / generated signal presented as an ordinary `LoopbackSource`, so
+//!   everything downstream of the frame queue stays production code.
 //!
 //! Platform matrix (Phase 1b): Windows = loopback + mic, Linux = monitor + mic,
 //! macOS = mic only — the UI must say so. VAD consumes `int16` downstream
@@ -19,11 +26,16 @@
 
 pub mod cpal_common;
 pub mod cpal_mic;
+pub mod endpoint;
 pub mod frame;
 pub mod loopback;
 pub mod resample;
+pub mod service;
 pub mod uplink;
 pub mod vad;
+
+#[cfg(feature = "audio-testharness")]
+pub mod synthetic;
 
 #[cfg(target_os = "linux")]
 pub mod cpal_monitor;
@@ -31,6 +43,11 @@ pub mod cpal_monitor;
 pub mod wasapi_loopback;
 
 pub use cpal_common::{CpalCapture, CpalTarget};
+pub use endpoint::{
+    detect_segments, Close, Decisions, EndpointState, EndpointStats, Heartbeat, Segment,
+    END_SILENCE_FRAMES, HOLD_CAPACITY, MAX_SEG_FRAMES, MIN_KEEP_FRAMES, START_MIN_VOICED,
+    START_WINDOW, VAD_HEARTBEAT_MS,
+};
 pub use frame::{
     encode_ws_event, encode_ws_frame, f32_to_i16, i16_to_f32, Frame16k, F32_BYTES, FRAME_MS,
     FRAME_SAMPLES, HEADER_BYTES, SAMPLE_RATE, TYPE_AUDIO, TYPE_EVENT, WIRE_BYTES,
@@ -43,10 +60,16 @@ pub use resample::{
     decode_interleaved_f32_le_to_mono, downmix_interleaved_f32_to_mono,
     downmix_interleaved_i16_to_mono_f32, downmix_stereo_f32_to_mono, MonoResampler16k,
 };
+pub use service::{
+    platform_source_factory, CaptureService, DecisionTap, PathSnapshot, SelfCheck, SelfCheckStatus,
+    ServiceSnapshot, SourceFactory, NOMINAL_FRAME_RATE, PROBE_MS, WORKER_TICK,
+};
+#[cfg(feature = "audio-testharness")]
+pub use synthetic::{expected_frames, read_wav, Pace, SyntheticSource, WavMaterial};
 pub use uplink::{
     tauri_event_name, AudioUplink, EventSink, PathLabel, TauriSink, UplinkConfig, UplinkError,
     UplinkSnapshot, EVT_ASR_ERROR, EVT_ASR_FINAL, EVT_ASR_PARTIAL, EVT_ASR_START,
-    OUT_QUEUE_CAPACITY,
+    EVT_CAPTURE_DEGRADED, OUT_QUEUE_CAPACITY, RECONNECT_BACKOFF,
 };
 pub use vad::{open_default as open_default_vad, Vad, VadError, WebrtcVad, DEFAULT_AGGRESSIVENESS};
 

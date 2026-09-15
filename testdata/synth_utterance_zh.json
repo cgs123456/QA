@@ -1,0 +1,30 @@
+{
+  "generator": "scripts/gen_synth_utterance.py",
+  "source": "Windows SAPI 中文语音（Microsoft Huihui）",
+  "why": "假源全链 E2E 的输入：必须是可被真实 ASR 转写的合成语音，否则检索给不出固定答案",
+  "utterances": [
+    "发货周期是多久",
+    "退货期限是几天"
+  ],
+  "expected_official_answers": [
+    "标准发货周期为三天内发出。",
+    "七天内无理由退货，运费由买家承担首重。"
+  ],
+  "layout_ms": {
+    "lead_silence": 600,
+    "gap_silence": 700,
+    "tail_silence": 600
+  },
+  "wav_format": [
+    1,
+    2,
+    22050
+  ],
+  "wav_bytes": 331942,
+  "wav_ms": 7526,
+  "per_utterance_wav_bytes": [
+    123998,
+    124202
+  ],
+  "wav_sha256": "34a4b867f0c0bc086bb6de4d33e41f90d59cb07d23d8eeed8786ed3a6615edaf"
+}

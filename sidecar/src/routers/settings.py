@@ -16,7 +16,9 @@ sidecar 仅内存持有（core/secrets.py），不落盘、不打日志、不回
 **音频诊断（task19）**：`GET /diagnostics/audio` 返回最近一次 WS 连接的
 内容无关计数（`routers/audio.py::_LAST_COUNTERS` 的只读快照）+ 限额常量。
 从未建连 → `last_connection: null`（不是 404——“无数据”是合法状态）。
-设备名/双路偏差属 Rust 采集侧状态，本端点不编造：`capture` 段如实标记 pending。
+`capture` 段报 sidecar **真正看得见**的那部分采集状态（当前在连的 path，
+见 `_capture_status`）；设备名/原生格式/自检结论属 Rust 采集侧，本端点
+看不见也不编造，前端从 Tauri 命令 `get_capture_state` 拿那些。
 落地裁定（PRD 未细化端点）：
 - 切换用 PUT 而非 POST —— 与既有 `PUT /stores/current` 同形（单选切换语义幂等）。
 - 未知 provider 名 → 400（请求体有误，不是资源缺失）。
@@ -91,6 +93,35 @@ def set_latency(body: SetLatencyBody):
         raise HTTPException(status_code=409, detail={"error": e.kind, "message": str(e)})
 
 
+def _capture_status() -> dict:
+    """`capture` 段：sidecar **真正看得见**的那部分采集状态。
+
+    设备名/原生格式/自检结论属于 Rust 采集侧，本端点看不见也不编造（前端从
+    Tauri 命令 `get_capture_state` 拿那些）。这里只报"线上有没有人在推音频"——
+    这正是排查"UI 说在采、sidecar 什么都没收到"时唯一需要的那个事实。
+    """
+    from routers import audio as audio_mod
+
+    active = audio_mod.active_paths()
+    if active:
+        return {
+            "status": "connected",
+            "active_paths": active,
+            "note": "采集服务已连上 /audio/stream",
+        }
+    if audio_mod.last_counters() is None:
+        return {
+            "status": "idle",
+            "active_paths": [],
+            "note": "尚未收到任何音频连接",
+        }
+    return {
+        "status": "disconnected",
+        "active_paths": [],
+        "note": "最近一次音频连接已断开",
+    }
+
+
 @router.get("/diagnostics/audio")
 def audio_diagnostics():
     """最近一次音频 WS 连接的内容无关计数 + 限额（诊断面板轮询用，R14）。
@@ -106,7 +137,5 @@ def audio_diagnostics():
             "max_segment_frames": audio_mod.MAX_SEGMENT_FRAMES,
             "send_timeout_s": audio_mod.SEND_TIMEOUT_S,
         },
-        # Rust 采集侧状态（设备名/双路 ts 偏差）待采集服务接线后由 Tauri 命令补；
-        # 本端点只给 sidecar 看得见的部分，不编造看不见的。
-        "capture": {"status": "pending", "note": "待 Rust 采集服务接线（endpoint.rs 后续）"},
+        "capture": _capture_status(),
     }

@@ -36,6 +36,16 @@ futures-util = "0.3.34"
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.24.0"
 
+# 注入测试台读 WAV 用（`SyntheticSource::from_wav`）。可选：不打开
+# `audio-testharness` 时生产构建里根本没有 hound。
+hound = { version = "3.5.1", optional = true }
+
+[features]
+default = []
+# 注入测试台：`audio::synthetic`（SyntheticSource）+ `examples/inject_wav` +
+# `tests/inject_e2e.rs`。**只给 dev/example**，不进生产构建。
+audio-testharness = ["dep:hound"]
+
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
@@ -47,3 +57,19 @@ strip = true
 
 [dev-dependencies]
 hound = "3.5.1"
+# 端点 fixture 的样本指纹（scripts/gen_endpoint_fixture.py 同算法）。
+sha2 = "0.10"
+
+# 注入人工走查工具：`cargo run --features audio-testharness --example inject_wav
+# -- --wav testdata/synth_utterance_zh.wav --path loopback --realtime`
+# 需要 feature 才编（它依赖 `audio::synthetic`），否则默认 `cargo build --examples`
+# 会因为找不到模块而失败。
+[[example]]
+name = "inject_wav"
+required-features = ["audio-testharness"]
+
+# 注入 E2E 与 `SyntheticSource` 同源，所以同样需要 feature。
+# 不带 feature 时 `cargo test` 直接跳过这个二进制（而不是编译失败）。
+[[test]]
+name = "inject_e2e"
+required-features = ["audio-testharness"]

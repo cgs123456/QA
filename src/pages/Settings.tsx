@@ -1,6 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { ApiError, apiGet, apiPost, apiPut } from "../lib/api";
+import {
+  EVT_CAPTURE_STATE,
+  diagnosticsRows,
+  getCaptureState,
+  pathLabel,
+  pathStatusLabel,
+  selfCheckSummary,
+  sidecarCaptureSummary,
+  type CaptureState,
+  type SidecarCapture,
+} from "../lib/capture";
 
 const PROVIDERS = ["ollama", "openai", "custom"] as const;
 const PROVIDER_STORAGE_KEY = "interview-copilot.llm-provider";
@@ -41,7 +53,7 @@ type LatencyState = {
 type AudioDiagnostics = {
   last_connection: Record<string, number> | null;
   limits: { max_pending: number; max_segment_frames: number; send_timeout_s: number };
-  capture: { status: string; note: string };
+  capture: SidecarCapture;
 };
 
 function formatBytes(n: number | null): string {
@@ -91,12 +103,23 @@ export function Settings() {
   const [diag, setDiag] = useState<AudioDiagnostics | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
 
+  // ---- 采集自检（M2-7：Rust 侧真值；开流 500ms 探测的格式/权限/帧率） ----
+  const [capture, setCapture] = useState<CaptureState | null>(null);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+
   async function refreshDiag() {
     setDiagError(null);
+    setCaptureError(null);
     try {
       setDiag(await apiGet<AudioDiagnostics>("/diagnostics/audio"));
     } catch (err) {
       setDiagError(String(err));
+    }
+    // 采集状态是本地命令，与 sidecar 端点分开 catch：sidecar 挂了也要能看采集诊断。
+    try {
+      setCapture(await getCaptureState());
+    } catch (err) {
+      setCaptureError(String(err));
     }
   }
 
@@ -148,6 +171,34 @@ export function Settings() {
       });
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // 采集自检：先拉一次快照（可能快捷键已经把采集跑起来了），再订阅回推。
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    getCaptureState()
+      .then((snap) => {
+        if (!cancelled) setCapture(snap);
+      })
+      .catch((err) => {
+        // 非 Tauri 环境（vitest / 浏览器直开）没有命令通道：面板隐藏而不是报错。
+        if (!cancelled) setCaptureError(String(err));
+      });
+    listen<CaptureState>(EVT_CAPTURE_STATE, (event) => {
+      if (!cancelled && event.payload != null) setCapture(event.payload);
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        // 同上：没有事件总线时静默降级。
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
   }, []);
 
@@ -418,9 +469,46 @@ export function Settings() {
               下行超时 {diag.limits.send_timeout_s}s
             </p>
             <p data-testid="diag-capture">
-              当前设备：{diag.capture.status === "pending" ? "待采集服务接线（Rust 侧）" : diag.capture.status}
-              ——{diag.capture.note}
+              sidecar 侧：{sidecarCaptureSummary(diag.capture)}
             </p>
+          </>
+        )}
+      </div>
+
+      {/* 采集自检（Rust 侧真值）：开流 500ms 探测的设备/格式/实际帧率 */}
+      <div>
+        <h3>采集自检（Rust 侧）</h3>
+        <button data-testid="capture-refresh" type="button" onClick={() => void refreshDiag()}>
+          刷新
+        </button>
+        {captureError != null && (
+          <p data-testid="capture-diag-error">采集诊断不可用：{captureError}</p>
+        )}
+        {capture != null && (
+          <>
+            <p data-testid="capture-diag-state">
+              {capture.running ? "采集中" : "未采集"}
+              {capture.last_error != null && ` · 异常：${capture.last_error}`}
+            </p>
+            {capture.paths.length === 0 ? (
+              <p data-testid="capture-diag-empty">尚未启动过采集（按 F1.6 或到「实时提词」开一次）。</p>
+            ) : (
+              capture.paths.map((p) => (
+                <div key={p.path} data-testid={`capture-diag-${p.path}`}>
+                  <p>
+                    <strong>{pathLabel(p.path)}</strong>：{pathStatusLabel(p)}
+                  </p>
+                  <p data-testid={`capture-selfcheck-${p.path}`}>{selfCheckSummary(p.self_check)}</p>
+                  <ul data-testid={`capture-counters-${p.path}`}>
+                    {diagnosticsRows(p).map(([k, v]) => (
+                      <li key={k}>
+                        {k}：{v}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))
+            )}
           </>
         )}
       </div>

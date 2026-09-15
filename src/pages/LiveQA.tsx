@@ -1,6 +1,7 @@
 import { Teleprompter } from "../components/Teleprompter";
 import { useLiveQA } from "../hooks/useLiveQA";
 import { capturePaths, type CapturePath } from "../lib/liveqa";
+import { captureSummary, pathLabel, pathStatusLabel, selfCheckSummary } from "../lib/capture";
 import type { QuestionReason } from "../lib/trigger";
 
 const PATH_LABELS: Record<CapturePath, string> = {
@@ -21,6 +22,7 @@ const SKIP_LABELS: Record<QuestionReason, string> = {
  *
  * 页面本身不做任何策略判断：它订阅 `asr://final`、渲染状态机给出的卡片。
  * 「什么时候响、响什么」全在 `lib/liveqa.ts` 与 `lib/trigger.ts` 里。
+ * 采集开关同理——它只调命令，状态由 Rust 回推（见 `lib/capture.ts`）。
  */
 export function LiveQA() {
   const {
@@ -31,10 +33,12 @@ export function LiveQA() {
     lastError,
     lastPath,
     lastTranscript,
-    captureRequested,
+    capture,
+    captureError,
     platform,
     notice,
     triggerManual,
+    requestCaptureToggle,
     reset,
   } = useLiveQA();
 
@@ -51,6 +55,13 @@ export function LiveQA() {
       </p>
 
       <div className="row">
+        <button
+          type="button"
+          data-testid="live-capture-toggle"
+          onClick={() => void requestCaptureToggle()}
+        >
+          {capture.running ? "停止采集" : "开始采集"}
+        </button>
         <button type="button" data-testid="live-manual" onClick={triggerManual}>
           手动提词（Ctrl+Shift+Space）
         </button>
@@ -64,10 +75,20 @@ export function LiveQA() {
         {lastPath != null && ` · 最近来源：${PATH_LABELS[lastPath as CapturePath] ?? lastPath}`}
         {lastSkip != null && ` · 上句跳过（${SKIP_LABELS[lastSkip]}）`}
       </p>
-      {captureRequested && (
-        <p data-testid="live-capture-requested">
-          已收到采集开关（F1.6）。采集服务尚未接线，当前不会有音频上行。
-        </p>
+
+      {/* 采集真值：跑没跑、跑得对不对，都以 Rust 回推的快照为准 */}
+      <p data-testid="live-capture-state">{captureSummary(capture)}</p>
+      {capture.paths.length > 0 && (
+        <ul data-testid="live-capture-paths">
+          {capture.paths.map((p) => (
+            <li key={p.path} data-testid={`live-capture-path-${p.path}`}>
+              {pathLabel(p.path)}：{pathStatusLabel(p)} · {selfCheckSummary(p.self_check)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {captureError != null && (
+        <p data-testid="live-capture-error">采集失败：{captureError}</p>
       )}
       {lastError != null && <p data-testid="live-error">检索失败：{lastError}</p>}
       <p className="live-transcript" data-testid="live-transcript">

@@ -62,7 +62,27 @@ def test_diagnostics_empty_before_any_connection():
     assert body["last_connection"] is None
     assert body["limits"]["max_pending"] == audio_mod.MAX_PENDING
     assert body["limits"]["max_segment_frames"] == audio_mod.MAX_SEGMENT_FRAMES
-    assert body["capture"]["status"] == "pending"
+    # capture 段报 sidecar 真正看得见的事实（不再是占位 "pending"）：
+    # 从未建连 → idle + 空 active_paths。
+    assert body["capture"]["status"] == "idle"
+    assert body["capture"]["active_paths"] == []
+
+
+def test_diagnostics_capture_reflects_a_live_connection():
+    """在连时 capture 段必须从 idle 变 connected 并列出 path，断开后变 disconnected。
+
+    这是"UI 说在采、sidecar 什么都没收到"这类排查唯一需要的那个事实。
+    """
+    with client.websocket_connect("/audio/stream", headers=_h()) as ws:
+        ws.send_bytes(_event(0, 0, {"event": "segment_start",
+                                    "ts_ms": 0, "path": "loopback"}))
+        ws.receive_json()
+        live = client.get("/diagnostics/audio", headers=_h()).json()["capture"]
+        assert live["status"] == "connected"
+        assert live["active_paths"] == ["loopback"]
+    after = client.get("/diagnostics/audio", headers=_h()).json()["capture"]
+    assert after["status"] == "disconnected"
+    assert after["active_paths"] == []
 
 
 def test_diagnostics_reflects_last_connection():

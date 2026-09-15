@@ -81,12 +81,18 @@ impl std::fmt::Display for AudioError {
 impl std::error::Error for AudioError {}
 
 /// Counters a capture source exposes to the shell (R13 observability).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+///
+/// `errors` 是**源侧**错误计数（设备掉线/流重建失败等）。它**不含** VAD 分类
+/// 失败 —— 那属于 worker，落在 [`crate::audio::service::PathSnapshot::vad_errors`]。
+/// 两边分开计数是为了让诊断面板能区分"设备出问题"与"帧契约被破坏"。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 pub struct CaptureStats {
     /// Frames handed to the consumer (monotonic, wraps never).
     pub frames_emitted: u64,
     /// Frames evicted by the drop-oldest policy.
     pub frames_dropped: u64,
+    /// Source-side errors (not VAD classification failures).
+    pub errors: u64,
 }
 
 /// Bounded, single-consumer queue that never blocks the producer.

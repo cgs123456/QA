@@ -18,6 +18,13 @@ import {
   type LiveSessionOptions,
   type TranscriptEvent,
 } from "../lib/liveqa";
+import {
+  EMPTY_CAPTURE_STATE,
+  EVT_CAPTURE_STATE,
+  getCaptureState,
+  toggleCapture,
+  type CaptureState,
+} from "../lib/capture";
 import { askQuestion } from "../lib/qa";
 import type { QuestionReason } from "../lib/trigger";
 
@@ -39,7 +46,15 @@ export type LiveQAState = {
   lastError: string | null;
   lastPath: string | null;
   lastTranscript: string | null;
-  captureRequested: boolean;
+  /**
+   * 采集服务的真实状态（来自 `capture://state` / 命令返回值）。
+   *
+   * 这里**不再自己翻一个布尔值**：采集的真值源在 Rust 侧（`CaptureService`），
+   * 前端猜一个「我以为在采集」的状态，会在设备打不开时理直气壮地骗人。
+   */
+  capture: CaptureState;
+  /** 上一次启停采集失败的原因（如 sidecar 未连接）。 */
+  captureError: string | null;
   platform: CapturePlatform;
   notice: string | null;
 };
@@ -68,7 +83,8 @@ export function useLiveQA(options: UseLiveQAOptions = {}) {
       lastError: null,
       lastPath: null,
       lastTranscript: null,
-      captureRequested: false,
+      capture: EMPTY_CAPTURE_STATE,
+      captureError: null,
       platform,
       notice: captureNotice(platform),
     };
@@ -150,10 +166,17 @@ export function useLiveQA(options: UseLiveQAOptions = {}) {
       }),
     );
     add(listen(EVT_TELEPROMPTER_TRIGGER, () => dispatch(session.manual(Date.now()))));
+    // 采集状态由 Rust 侧回推。前端**不**监听 `capture://toggle` 自己去翻状态 ——
+    // 那个事件是"意图"，不是"结果"：按下去可能因为 sidecar 没连上而失败。
     add(
-      listen(EVT_CAPTURE_TOGGLE, () =>
-        setState((s) => ({ ...s, captureRequested: !s.captureRequested })),
-      ),
+      listen<CaptureState>(EVT_CAPTURE_STATE, (event) => {
+        if (event.payload == null) return;
+        setState((s) => ({
+          ...s,
+          capture: event.payload,
+          captureError: event.payload.last_error,
+        }));
+      }),
     );
 
     return () => {
@@ -171,7 +194,41 @@ export function useLiveQA(options: UseLiveQAOptions = {}) {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  // 首次渲染拉一次真实状态：页面可能在采集已经跑起来之后才被打开
+  // （快捷键先按、再切到这个 tab），只靠事件会漏掉这一帧。
+  useEffect(() => {
+    let cancelled = false;
+    getCaptureState()
+      .then((snap) => {
+        if (!cancelled) setState((s) => ({ ...s, capture: snap }));
+      })
+      .catch(() => {
+        // 非 Tauri 环境（vitest / 浏览器直开）：保持空状态。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const triggerManual = useCallback(() => dispatch(session.manual(Date.now())), [dispatch, session]);
+
+  /**
+   * 前端开关：走命令，不用事件。
+   *
+   * 快捷键走事件（那是键盘钩子，只能发事件）；按钮走命令是因为它能**拿到结果**
+   * 并把失败原因直接显示出来，不用等状态回推绕一圈。
+   */
+  const requestCaptureToggle = useCallback(async () => {
+    try {
+      const snap = await toggleCapture();
+      setState((s) => ({ ...s, capture: snap, captureError: snap.last_error }));
+    } catch (e) {
+      setState((s) => ({
+        ...s,
+        captureError: e instanceof Error ? e.message : String(e),
+      }));
+    }
+  }, []);
 
   const reset = useCallback(() => {
     session.reset();
@@ -179,5 +236,5 @@ export function useLiveQA(options: UseLiveQAOptions = {}) {
     setState((s) => ({ ...s, lastSkip: null, lastError: null, lastTranscript: null }));
   }, [session, sync]);
 
-  return { ...state, triggerManual, reset };
+  return { ...state, triggerManual, requestCaptureToggle, reset };
 }
