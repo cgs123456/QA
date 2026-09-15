@@ -760,3 +760,44 @@
   rustc 会稳定报 ICE（`compiler unexpectedly panicked`），`CARGO_INCREMENTAL=0` 即解。
   **待真机**（本任务不可闭）：R19 六样本真实录音仍缺，故本条只证明“管线正确”，
   不证明“真实声学环境下的边界准确率”。
+- P1 匹配根因修复 + v2 基线（Top-3 0.490→0.980，2026-09-15；实现先行落地，本轮独立复现确认）。
+  **实现（三处，只改匹配）**：`retrieval/query_prep.py`（`PreparedQuery` 原文/关键词双视图：
+  复用扩展 `jieba_query` 做索引同款切词、`stop_words.utf8` 丢虚词、词级 OR 表达式；
+  ≤2 关键词（`SHORT_QUERY_KEYWORDS=2`）加汉字级 OR 并进 simple 池；拼音/空查询无关键词视图、
+  调用方退回扩展原查询）+ `retrieval/field_lookup.py`（精确 1.0 之后加关键词包含补齐，
+  `CONTAINMENT_S=0.8` 初值，受控词表内非模糊）+ `retrieval/fts5_search.py`
+  （jieba 路改关键词 OR，simple 路原样保拼音容错，bm25<-0.5 门限保留）；
+  `scripts/eval_baseline.py`（`--dry-run/--section/--before`，追加不覆盖，
+  数字先落 `docs/eval-v2-summary.json`）；`tests/test_query_prep.py` 19 条
+  （纯函数 + 真扩展对照：同一查询 AND 空池、OR 命中）。
+  **v2 数字**（`docs/eval-baseline.md` v2 节 + 逐题 59 行）：Top-3/Top-5 **0.980**、
+  字段命中率 0.449、答 23 题错 1 题（0.043，错答停在 maybe_multi 非自信答错）、
+  direct 0.254、Fail-Closed 0.610、null 题 **10/10 拒答**；
+  残留 1 例已定位（`我下单之后要等几天才发货？`→eval-006@0.628，极差 0.009 交用户判断，
+  词袋 8 文档固有歧义不修）+ 被否决变体（全量字符 OR 得 Top-3 1.000 但把错答抬进
+  direct 档，按“宁可错杀”弃用）在案。
+  **独立复现（本轮实测，非复述）**：新建隔离 venv（`C:\tmp\evalvenv`，仓外，
+  `requirements-lock.txt` 全量安装）→ `pytest` **311 passed / 1 skipped**
+  （skip 唯 `webrtcvad` 可选依赖，与 C1b 行一致）→ `test_query_prep.py` 19/19 →
+  `eval_baseline.py --dry-run` 的 summary 除计时/tmp 外与落盘 JSON **完全一致** →
+  59/59 逐题（期望/top1@分数/动作/top3）**零差异** → `cargo clippy --all-targets`
+  **0 告警**。树内零修改（JSON 重跑后已用备份恢复，hash 一致）。
+  **阈值未动（R15）**：代码实测 TH_DIRECT 0.75 / TH_MAYBE 0.45 / GAP 0.15 /
+  bm25 -0.5 / vec 0.6 / w 3-1-1-1 全默认值。
+  **诚实记录**：① `fuse` 对包含命中的 QA 联动仍给 `s_field=1.0`（与精确不区分）——
+  文档残留分析节即基于该行为建模，保持现状。② eslint 未跑：本机无 node，且本任务
+  零前端文件改动，无回归可能。③ Windows GBK 控制台跑脚本须带
+  `PYTHONIOENCODING=utf-8`，否则逐题表打印翻车（评测本身不受影响）。
+- M2 验收报告改判（2026-09-15，`docs/acceptance-m2.md` **第三版**）：C1b 落地后逐项重跑。
+  **M2-7 端点状态机由「未达标（缺件）」改判为「通过」** —— 第二版唯一的**可写码闭合项**
+  关掉了。结论 **11 通过 / 1 部分通过 / 2 未达标 → 12 通过 / 1 部分通过 / 1 未达标**。
+  证据：`ENDPOINT_PARITY_PASS frames=18309 segments=89 worst_boundary_error_frames=0`
+  （与冻结参考实现逐帧对拍，边界误差 0 帧 < 1 帧达标）+ 注入 E2E 双路复核
+  （`INJECT_DUAL_PATH_PASS loopback_segments=2 mic_segments=1`，互不干扰）。
+  同步更新：§1#3（lib 74→114/125，VAD 由“可编译验证”升为“实跑”）、
+  §1#6（`test_diagnostics` 3→4）、§1#12（`capture.status` 由占位 `pending` 变真值）、
+  §1#13（cargo test 78→142）、§1#14（pytest 229→311、vitest 89→148、**`fmt` 债务已清**）。
+  **Tag 判定仍暂缓，但阻塞项 5 → 4**，且剩下 4 项**没有一项是「缺代码」**
+  （R19 缺真实录音 / G1 缺 Ollama / M2-13 缺 macOS-Linux 机器 / M2-12 缺 Tauri 壳）。
+  **本机 M2 可写码工作量已归零**。
+  **不自行改判 tag**：R19 是 PRD 明写验收项，缺真实数据不算通过。

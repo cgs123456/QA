@@ -1,9 +1,13 @@
 # M2（音频链路）验收报告（PRD §6.2）
 
-> **本版为第二版，2026-09-15 在「本机」（下表 B 机）重跑。** 第一版（2026-09-14）
-> 跑在另一台机器上，其环境缺 cargo / git / vendor 二进制 / node_modules，
-> 导致 6 项记「环境阻塞」。本机这些依赖齐备，故**逐项重跑并把阻塞项换成实测**。
-> 两版数字**不可直接比较**（机器规格差一个量级，见 §0）。
+> **本版为第三版（2026-09-15，C1b 落地后重跑）。** 第二版（同日早些）跑在「本机」（下表 B 机），
+> 第一版（2026-09-14）跑在另一台机器上（环境缺 cargo / git / vendor 二进制 / node_modules，
+> 6 项记「环境阻塞」）。三版数字**不可直接比较**（机器规格差一个量级，见 §0）。
+>
+> **第三版改了什么**：C1b（「采集→VAD→端点→uplink→sidecar」生产链打通 + 注入验证替代真机）
+> 落地，把第二版唯一的**可写码闭合项**（M2-7 端点状态机缺件）关掉了 —— 见 §1#7。
+> 另：第二版记的 `cargo fmt --check` 既有债务（§3.C）已清；诊断面板的
+> `capture.status=pending` 占位已换成真值（§1#12）；全量回归数字随之上浮（§1#14）。
 >
 > PRD 文件不在仓内：下表按 1b 任务史（1b-1～task19 的 R9–R14、端点、VAD、ASR、
 > 时延、平台范围）+ 本任务的两道硬门槛重建；凡重建项均标「（重建）」，
@@ -11,11 +15,12 @@
 > 执行方式：本机可跑项**全部实跑**（命令 + 输出摘录见下）；需外部输入项如实标记，
 > 不估分、不借数。
 >
-> **结论：11 通过 / 1 部分通过（平台矩阵：Windows 本机实测 + 全平台 cargo 测试绿，
-> macOS/Linux 真机缺）/ 2 未达标（M2-7 端点状态机缺件、M2-8 R19 缺真实嘈杂数据）**；
+> **结论：12 通过 / 1 部分通过（平台矩阵：Windows 本机实测 + 全平台 cargo 测试绿，
+> macOS/Linux 真机缺）/ 1 未达标（M2-8 R19 缺真实嘈杂数据）**；
 > 门槛1 **固定答案三 Provider 全 PASS**（生成答案仍阻塞：无 Ollama）；
 > 门槛2 **GATE2_PASS**。
-> `m2-audio-pipeline` tag **暂缓**（剩余 4 项均非本机可闭，见 §4）。
+> `m2-audio-pipeline` tag **仍暂缓**（剩余 4 项均非本机可闭，见 §4）——但**已从 5 项降到 4 项**，
+> 且剩下的**没有一项是「缺代码」**，全是「缺数据 / 缺机器 / 缺 LLM 运行时」。
 
 ## 0. 机器与可比性（先写，否则数字不可比）
 
@@ -41,18 +46,18 @@ A 机的两项 FAIL（faster-whisper 18.0s、pytest 16 error）**经本机复测
 |---|---|---|---|
 | 1 | WS 鉴权 R9（无/错 token → 1008；真实 uvicorn 403 形态已记录） | **通过** | `pytest tests/test_audio_protocol.py` → **17 passed**（含 `test_auth_missing_close_1008` / `test_auth_wrong_close_1008`）；A 机 task-14 的 403 实测形态记入 api-contract（**偏差仍待裁定**，见 §3） |
 | 2 | 序号/seg_id/单连接一路 R10（共享序号空间、跳号重同步、`seg_{n}`） | **通过** | 同 17 passed（含跳号、冲突路径、重复 start→interrupted）；`duration_ms` 帧数×30ms（±1 帧） |
-| 3 | VAD 只在 Rust 侧、吃 int16 R11（双 provider 同形状） | **通过（本机可编译验证）** | `cargo test --lib` → **74 passed**（含 `audio::vad::*`、`audio::loopback::tests::pipeline_ten_minute_timestamp_budget`）；`cargo clippy --all-targets -D warnings` **0 告警**。A 机此项只能走读，本机为真编译 + 真测试 |
+| 3 | VAD 只在 Rust 侧、吃 int16 R11（双 provider 同形状） | **通过（本机实跑：真 VAD 消费真管线帧）** | `cargo test --lib` → **114 passed**（不带 feature）/ **125 passed**（带 `audio-testharness`），含 `audio::vad::*` 与 `audio::loopback::tests::pipeline_ten_minute_timestamp_budget`；`cargo clippy --all-targets -- -D warnings` **0 告警**（两种配置都是 0）。**C1b 起不再只是「可编译验证」**：每路一个独立线程自建 `WebrtcVad` 实例（`Vad` trait 故意 `!Send`），真消费管线 int16 帧 → `is_voiced` → 端点；注入 E2E 里段边界误差 0 帧即由**真 VAD 的决策**得出 |
 | 4 | 下行契约 R12（asr_start/final/error + provider/degraded + partial 同段 id） | **通过** | `test_audio_protocol` 17 + `test_low_latency` **10 passed**（partial 与 final 同 `segment_id`、迟到探测丢弃）+ `test_local_agreement` **13 passed** |
 | 5 | 背压有界 R13（待转写≤8、单段≤2000 帧丢最旧、发送锁+5s 超时） | **通过** | 协议单测锁定丢最旧/overload/截断告警各计数；门槛2 soak **601s 零 timeout 零 overload**（§2） |
-| 6 | 内容无关 R14（零打印、文本只进下行、日志无密钥/原文） | **通过** | `test_diagnostics` **3 passed** 断言诊断响应无转写文本；本报告只记转写**长度**不记内容；`test_asr_text_clean` 13 passed（清洗后文本只进下行） |
-| 7 | 端点状态机（起始 5 帧 3 voiced；结束 ~500ms hangover；边界误差 <1 帧；双路互不干扰） | **未达标（缺件）** | `src-tauri/src/audio/endpoint.rs` **仍不存在**（`audio/mod.rs` 未导出该模块）。参考实现 + 单测在仓且本机跑绿（`audio_eval/endpoint.py`，`test_audio_eval` **15 passed**）。缺件是唯一原因，非环境 |
+| 6 | 内容无关 R14（零打印、文本只进下行、日志无密钥/原文） | **通过** | `test_diagnostics` **4 passed** 断言诊断响应无转写文本；本报告只记转写**长度**不记内容；`test_asr_text_clean` 13 passed（清洗后文本只进下行）。C1b 新增的上行诊断（`source_device`/`source_stats`/`uplink.*`）同样只报计数与设备名，不含音频内容 |
+| 7 | 端点状态机（起始 5 帧 3 voiced；结束 ~500ms hangover；边界误差 <1 帧；双路互不干扰） | **通过（C1b 落地，第三版由「未达标」改判）** | `src-tauri/src/audio/endpoint.rs` 已落地（752 行，`audio/mod.rs` 导出）。常量与规格一致：`FRAME_MS=30` / `START_WINDOW=5` / `START_MIN_VOICED=3` / `END_SILENCE_FRAMES=17`（=510ms hangover）/ `MIN_KEEP_FRAMES=9` / `MAX_SEG_FRAMES=500` / `HOLD_CAPACITY=21`。**与冻结参考实现逐帧对拍**：`cargo test --test endpoint_parity` → **4 passed**，证据行 `ENDPOINT_PARITY_PASS frames=18309 segments=89 worst_boundary_error_frames=0`（18309 帧 / 89 段，**边界误差 0 帧** < 1 帧达标）。**真实链路复核**：`cargo test --test inject_e2e` → **3 passed**，真 VAD 决策 → 真端点 → 真 uplink → 真 sidecar，双路 `worst_boundary_error_frames=0`、`INJECT_DUAL_PATH_PASS loopback_segments=2 mic_segments=1`（互不干扰）。参考实现唯一来源 `sidecar/src/audio_eval/endpoint.py`（`test_audio_eval` **15 passed**），经 `scripts/endpoint_reference.py` 子进程调用，**刻意不在 Rust 里重写**（重写即「拿我的实现当标准」）；该脚本已先验复现 `testdata/endpoint_fixture.json` **29/29 例**。另 `capture_service_wiring` **6 passed** 覆盖停止时对未闭合段补发 `segment_end` |
 | 8 | VAD 默认 + R19 关闭（嘈杂子集对比数据在案） | **未达标（缺数据）** | `sidecar/tests/audio_samples/manifest.json` 6 槽**全 `missing`**（无 wav/标注）。对比 harness 本机**双 provider 全跑通**（`audio_regression.py --self-test` → **SELFTEST_PASS**，webrtc + silero 均实跑），样本一到即出数。默认保持 webrtc-vad |
 | 9 | 三 Provider 可切换（whisper/SenseVoice/Paraformer 同一样本出文本；切换免重启；断点续传） | **通过（本机可跑）** | A 机此项因缺 vendor 只能记「历史证据」，**本机可跑**：`test_asr_switch` **8 passed**（含「同一 WS 连接内切换后下一段换 provider」）+ `test_asr_text_clean` **13 passed** + `test_asr_fallback` **25 passed**；断点续传 `test_downloader` **5 passed**（含 `test_resume_from_part`）；横向对比见 `docs/benchmark.md` |
 | 10 | 整段时延口径（segment_end→asr_final，真实 WS；超时按 3× 段时长派生） | **通过（三 provider 全部实测）** | 门槛1 本机复测（§2）：faster-whisper **2195.5ms** / paraformer **183.3ms** / sensevoice **203.8ms**（n=3，真实 uvicorn + 真实 WS）；派生超时单测锁定 |
 | 11 | 低延迟门控（默认关；开需 CUDA；关即 task15 行为） | **通过** | `test_low_latency` 10 + `test_local_agreement` 13 passed；本机无 CUDA → 开启请求 409（门控单测锁定）；GPU 首片段仍待 CUDA 机器（task-18 记账） |
-| 12 | 诊断端点 + 面板（计数 + 限额；设备行不编造） | **通过（后端 + 前端类型/构建）** | `test_diagnostics` 3 passed + `test_auth_coverage` 2 passed（R2 覆盖表含 `/diagnostics/audio`、`/asr/providers`、`/asr/latency`）；前端 `tsc --noEmit` **0 错误** + `eslint` **0 错误** + `vite build` 成功；面板见 `Settings.tsx:397-426`（计数/限额/`capture.status=pending` 显式不编造）。**目检仍待 Tauri 壳** |
-| 13 | 平台矩阵（Win 回环+插拔重建；macOS mic；Linux monitor；双路 ts<50ms；面板显设备+偏差） | **部分通过** | **Windows 设备枚举本机实测**（`Win32_SoundDevice`，4 个）：`Realtek High Definition Audio`、`NVIDIA High Definition Audio`、`AMD High Definition Audio Device`、`NVIDIA Virtual Audio Device (Wave Extensible) (WDM)`；全平台音频代码 `cargo test` **78 passed**（lib 74 + `audio_frames_wav` 1 + `audio_ws_e2e` 3）；`audio::resample::tests::ten_minutes_no_drift` 锁定 10min ts 偏差 30ms（<50ms）。**插拔重建 / macOS / Linux 仍缺真机**（§6） |
-| 14 | 全量回归（pytest/vitest/Playwright；vendor/工具链债务） | **通过（全绿）** | **pytest 229 passed / 0 failed / 0 skipped**（A 机为 137 passed + 16 error + 1 fail，全系缺 vendor）；**vitest 89 passed**（4 文件）；**tsc 0**；**eslint 0**；**cargo test 全目标 78 passed**；**clippy 0 告警**；**playwright 1 passed**；`vite build` 成功（82 modules，js 286.19kB/gzip 89.10kB）；`check_size.py` → **SIZE_REGRESSION_PASS**。唯一未绿：`cargo fmt --check`（4 个既有文件，**非本次引入**，见 §3） |
+| 12 | 诊断端点 + 面板（计数 + 限额；设备行不编造） | **通过（后端 + 前端类型/构建；`capture.status` 已从占位变真值）** | `test_diagnostics` **4 passed**（第三版 +1：新增「在连 → `connected` + `active_paths`；断开 → `disconnected`」状态迁移用例）+ `test_auth_coverage` 2 passed（R2 覆盖表含 `/diagnostics/audio`、`/asr/providers`、`/asr/latency`）；前端 `tsc --noEmit` **0 错误** + `eslint src --max-warnings=0` **0 错误** + `vitest run` **148 passed**（含 `capture.test.ts`）。**第二版记的「`capture.status=pending` 显式不编造」已升级为真值**：sidecar 侧 `_capture_status()` 报 `connected`（带 `active_paths`）/ `idle` / `disconnected`（`routers/audio.py` 加 `_ACTIVE` + `active_paths()`）；Rust 侧 Tauri 命令返回 `current_device()` + `CaptureStats`（`seq`/`dropped`/`errors`），面板新增「采集自检（Rust 侧）」区，**数字全部来自真实 `CaptureStats`**（`source_stats`），R14 内容无关。**目检仍待 Tauri 壳** |
+| 13 | 平台矩阵（Win 回环+插拔重建；macOS mic；Linux monitor；双路 ts<50ms；面板显设备+偏差） | **部分通过** | **Windows 设备枚举本机实测**（`Win32_SoundDevice`，4 个）：`Realtek High Definition Audio`、`NVIDIA High Definition Audio`、`AMD High Definition Audio Device`、`NVIDIA Virtual Audio Device (Wave Extensible) (WDM)`；全平台音频代码 `cargo test --features audio-testharness` **142 passed**（lib 125 + `audio_frames_wav` 1 + `audio_ws_e2e` 3 + `capture_service_wiring` 6 + `endpoint_parity` 4 + `inject_e2e` 3），不带 feature **114 passed**；`audio::resample::tests::ten_minutes_no_drift` 锁定 10min ts 偏差 30ms（<50ms），新增 `stop_time_in_flight_tail_is_bounded_by_the_buffers_themselves` 锁定停表在途样本 ≤3 帧（实测 16k/44.1k/48k <1 帧、22.05k ≈2 帧）。**插拔重建 / macOS / Linux 仍缺真机**（§6） |
+| 14 | 全量回归（pytest/vitest/Playwright；vendor/工具链债务） | **通过（全绿；`fmt` 债务已清）** | **第三版本轮实跑**：**pytest 311 passed / 0 failed / 1 skipped**（第二版 229；A 机为 137 passed + 16 error + 1 fail，全系缺 vendor）；**vitest 148 passed**（9 文件，第二版 89/4 文件）；**tsc --noEmit 0**；**eslint src --max-warnings=0 0**；**cargo test --features audio-testharness 142 passed** / 不带 feature **114 passed**；**clippy --all-targets -- -D warnings 0 告警**（两种配置）；**`cargo fmt --check` 0** ← 第二版唯一的未绿项，**本轮已清**（见 §3.C）。**第二版实测、本轮未重跑**（未触碰相关代码）：`playwright 1 passed`、`vite build` 成功（82 modules，js 286.19kB/gzip 89.10kB）、`check_size.py` → **SIZE_REGRESSION_PASS** |
 | G1 | 硬门槛1：固定答案 ≤4s / 生成答案 ≤6s（分解耗时） | **固定答案三 Provider 全 PASS / 生成答案阻塞** | 见 §2：faster-whisper 合成总账 **2202.3ms**、paraformer **190.1ms**、sensevoice **210.6ms**，预算 4000ms。生成路径**无 Ollama 仍不可测**（与 A 机同状） |
 | G2 | 硬门槛2：双路 10 分钟零丢段/零污染/内存不泄漏增长 | **通过（GATE2_PASS）** | 见 §2：双路各 100 段全收、hash 零失配、RSS +3.9MB/601s |
 
@@ -113,48 +118,62 @@ GATE2_PASS
 - e2e 中位 ~1.4ms 系 HashProvider 下限口径（推理容量见 G1，不混为一谈）。
 - 范围外（未测，不断言）：Rust 采集侧设备枚举/插拔重建/双路 ts 偏差——
   程序与待认领见 `docs/audio-regression.md` §5–§6。
+  **第三版补充**：Rust 采集侧现已有**注入 E2E**（C1b）证明「真管线 → 真 VAD → 真端点 →
+  真 uplink → 真 sidecar」端到端正确（双路互不污染、边界误差 0 帧），但它走的是
+  `SyntheticSource`（合成语音 + 注入设备名），**真实设备枚举/插拔重建仍未测**，本项不变。
 
 ## 3. 未关项与既有债务的精确状态（防「someday」烂尾）
 
-**A. 未达标 2 项**
-- **M2-7 端点状态机缺件**：`endpoint.rs` 不存在是唯一原因。规格已冻结
-  （起始=最近 5 帧中 ≥3 帧 voiced；结束=连续 17 帧静音 hangover；最短段按**语音帧** ≥9 帧
-  保留；最长段 500 帧强制切段；`vad_state` 心跳 1s），参考实现
-  `sidecar/src/audio_eval/endpoint.py` + `test_audio_eval` 15 例在本机跑绿，
-  落地后须在同一样本上复核（runner 口径已冻结，不随实现漂移）。
+**A. 未达标 1 项（第二版为 2 项，M2-7 已闭合）**
+- ~~**M2-7 端点状态机缺件**~~ → **已于第三版闭合**（C1b）：`endpoint.rs` 落地，
+  规格未漂移（起始=最近 5 帧中 ≥3 帧 voiced；结束=连续 17 帧静音 hangover；
+  最短段按**语音帧** ≥9 帧保留；最长段 500 帧强制切段；`vad_state` 心跳 1s），
+  并在**同一样本上**与冻结参考实现逐帧对拍（`ENDPOINT_PARITY_PASS frames=18309
+  segments=89 worst_boundary_error_frames=0`）——口径未随实现漂移。
 - **M2-8 R19 未关**：6 样本槽全空 → 嘈杂子集对比数据不存在。harness 本机已**双 provider 定标**
   （`SELFTEST_PASS`）。关闭三条件：嘈杂样本 + 表1 + Rust 侧 webrtc 绝对值复核。
+  **注意**：C1b 的注入 E2E 用的是**合成语音**，能证明「管线正确」（边界误差 0 帧），
+  **不能**替代 R19 的「真实声学环境下的边界准确率」——两者不要混为一谈。
 
 **B. 环境/真机阻塞 3 项**
 - **G1 生成答案**：无 Ollama（本机未安装）。
 - **M2-13 平台真机**：Windows 设备枚举本机已实测；插拔重建、macOS、Linux 需对应机器。
 - **M2-12 前端目检**：`tsc`/`eslint`/`vite build` 本机已绿；页面目检需 Tauri 壳。
 
-**C. 既有债务（非本次引入，本机复现）**
-- `cargo fmt --check` 在 4 个未触碰文件上失败：`security/keychain.rs:15`、
-  `sidecar/degradation.rs:43`、`sidecar/manager.rs:26/293/305/372/473/495`
-  （均为换行重排、无语义变化）。**本轮未跨文件重排**，避免把无关 diff 混进验收提交；
-  是否全仓 `cargo fmt` 待裁定。
+**C. 既有债务**
+- ~~`cargo fmt --check` 在 4 个未触碰文件上失败~~ → **已清（第三版）**。第二版记的
+  `security/keychain.rs`、`sidecar/degradation.rs`、`sidecar/manager.rs` 三处
+  （均为换行重排、无语义变化）已单独提交为一条 `chore`（`c4c682a`），
+  **刻意不混进功能提交**以免错误归因。现 `cargo fmt --check` 全仓 **0**。
 - **task-14 DoD 字面「错 token → 1008」vs 实测 403**：偏差仍在（已记 api-contract）。
+  第三版复核：`_check_auth` 失败在真 ASGI 下表现为**普通 HTTP 403**（`TestClient`
+  才短路成 1008），与第二版结论一致。
 
 **D. 真实数据缺口（合成不能替代，需用户投喂）**
 - WER / VAD 边界误差 / 端点边界三笔账都卡在**同一份 6 样本录音 + 标注**
   （指南 `sidecar/tests/audio_samples/README.md`）。
 - task-15 ASR 文本质量、1b-4 VAD 真人声自测、task-16 阈值标定（100 题集）同源阻塞。
 
-## 4. Tag 判定：仍暂缓 `m2-audio-pipeline`
+## 4. Tag 判定：仍暂缓 `m2-audio-pipeline`（阻塞项 5 → 4）
 
 第一版的 6 项阻塞中，**4 项已由本机环境消除**（cargo/vendor/node_modules/前端工具链），
-且两项 FAIL 经复测证明是机器负载所致。但剩余 4 项**均非本机可闭**：
+且两项 FAIL 经复测证明是机器负载所致。第二版剩 5 项；**第三版关掉 M2-7（唯一可写码项），
+剩 4 项，且全部不是「缺代码」**：
 
 | 阻塞项 | 性质 | 清除条件 |
 |---|---|---|
-| M2-7 端点状态机缺件 | 功能缺口（可写码） | `endpoint.rs` 落地 + 边界误差 <1 帧实测 |
-| M2-8 R19 未关 | 数据缺口（需用户） | 嘈杂子集录音 + 表1 + Rust 复核 + 定默认 |
+| ~~M2-7 端点状态机缺件~~ | ~~功能缺口（可写码）~~ | **已闭（第三版）**：`endpoint.rs` 落地 + 边界误差 0 帧实测（§1#7） |
+| M2-8 R19 未关 | 数据缺口（需用户投喂） | 嘈杂子集录音 + 表1 + Rust 复核 + 定默认 |
 | G1 生成答案 | 环境（需装 LLM 运行时） | Ollama 就绪后联测 ≤6s |
 | M2-13 平台真机 | 环境（需 macOS/Linux 机器） | 各跑 `cargo test` + 采集回听 + 双路 ts 贴数 |
 | M2-12 前端目检 | 环境（需 Tauri 壳） | 诊断面板目检 |
 
-**建议**：先做 M2-7（唯一可写码闭合项，且规格与参考实现都已冻结），
-再等用户投喂 6 样本录音——两项一齐关掉后，剩余就只剩「装 Ollama」和「借机器」，
-tag 才名副其实。用户也可明确指示「按当前范围打 tag」以覆盖本判定（M1 §4 同款程序）。
+**建议（第三版更新）**：第二版建议的「先做 M2-7」**已执行完毕**。现在剩下的 4 项
+**没有一项能在本机推进**，因此本机的 M2 可写码工作量已归零。两条路：
+1. **等外部输入**：用户投喂 6 样本录音（关 R19）→ 装 Ollama（关 G1）→ 借 macOS/Linux 机器（关 M2-13）
+   —— 全部到位后 tag 才名副其实；
+2. **按当前范围打 tag**：M2 的**代码与合成链路**已完整且全绿（142 项 Rust 测试含注入 E2E、
+   pytest 311、vitest 148、clippy/fmt 0），若认可「真机数据与跨平台属后续里程碑」，
+   可由用户明确指示打 tag 覆盖本判定（M1 §4 同款程序）。
+
+**本报告不自行改判 tag**：R19 是 PRD 明写的验收项，缺真实数据就不算通过。
