@@ -99,9 +99,17 @@
   消除 Python wheel vs Rust crate 的二进制差异）；
 - [ ] 按数据定默认（任一方向）并更新本节 + `vad.rs` 头注释的 “Provider choice is still open”。
 
-## 4. 管线定标（合成，只证“表能跑”，2026-09-14 实跑）
+## 4. 管线定标（合成，只证“表能跑”）
 
-`--self-test` SELFTEST_PASS（RC=0，Windows AMD64 / Python 3.12.10，
+**B 机复跑（2026-09-15）**：`--self-test` **SELFTEST_PASS**（RC=0，
+Windows AMD64 / AMD Family 25 Model 80 / Python 3.13.14，
+webrtcvad-wheels + silero-vad 6.2.1 / torch 2.14.0+cpu / onnxruntime）：
+silence 三项全 PASS（webrtc 全静音 / silero 全静音 / 端点零段）、
+speech `webrtc-finds-segments` 检出 2 段 + `match-struct-ok` 配上 2/2 +
+`silero-frame-aligned` PASS、wer 两项 PASS、latency `one-row` 1ms。
+**双 provider 均实跑**，harness 在本机完整可用。
+
+**A 机首跑（2026-09-14）**：`--self-test` SELFTEST_PASS（RC=0，Windows AMD64 / Python 3.12.10，
 webrtcvad-wheels 2.0.14 / silero-vad 6.2.1 / onnxruntime 1.30.0）：
 
 - 纯静音 3990ms：双方全静音、端点零段；
@@ -114,15 +122,19 @@ webrtcvad-wheels 2.0.14 / silero-vad 6.2.1 / onnxruntime 1.30.0）：
 
 ## 5. 平台兼容矩阵
 
-| 平台 | 路径 | 状态（2026-09-14） |
+| 平台 | 路径 | 状态（2026-09-15 更新） |
 |---|---|---|
-| Windows | 回环（WASAPI 默认渲染） | 本机设备枚举见下；采集/插拔重建待真机步骤（cargo 缺失，本机不可构建 example） |
+| Windows | 回环（WASAPI 默认渲染） | 设备枚举两机均已实测（见下）；**B 机有 cargo**，example 可构建，采集/插拔重建待真机步骤 |
 | Windows | 耳机插拔重建流 | 待真机：步骤见 §6①，期望 `DeviceChanged` + `StreamRebuilt` 且 seq/ts 不重启 |
 | macOS | mic-only | 待 macOS 机器：`cargo test` + 10s 采集回听 |
 | Linux | monitor + mic | 待 Linux 机器：`cargo test` + PulseAudio monitor 采集回听 |
 | 双路 | ts 偏差 <50ms | 设计已保证（sample-count 派生，`loopback.rs` 10min 合成测试偏差 30ms）；真机双路实测待补 |
 
-本机（Windows）音频设备枚举实测（`Win32_SoundDevice`，2026-09-14）：
+**B 机（Windows，2026-09-15）音频设备枚举实测**（`Win32_SoundDevice`，共 4 个）：
+`Realtek High Definition Audio`、`NVIDIA High Definition Audio`、
+`AMD High Definition Audio Device`、`NVIDIA Virtual Audio Device (Wave Extensible) (WDM)`。
+
+**A 机（Windows，2026-09-14）音频设备枚举实测**（`Win32_SoundDevice`）：
 
 - `NVIDIA Virtual Audio Device (Wave Extensible) (WDM)` — OK（注：仅虚拟音频驱动，
   本机无 NVIDIA GPU/`nvidia-smi`，与 task18 结论一致）

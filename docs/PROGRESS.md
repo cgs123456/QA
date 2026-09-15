@@ -271,6 +271,35 @@
   无 git、PATH 缺 System32**（`where`/`tail` 不可用，`pip` 曾误指 hermes venv，
   一律改用 `python -m pip`）。本盒子 Python 为 **3.12.10**（此前记“本机可用 3.13.14”
   应为另一环境；PRD 要求 3.11，CI/打包时仍须按 3.11 锁定验证）。
+  **两机并存的事实（重要，防误推）**：上段「无 cargo / 无 git / 无 vendor / 无 node_modules、
+  Python 3.12.10」描述的是 **A 机**；本项目同时有一台能力完整的 **B 机**
+  （`C:/Users/Administrator/.cargo/bin`、git 2.55.0、`sidecar/vendor/libsimple.dll`、
+  node_modules、Python 3.13.14、12 逻辑核 / 32GB）。**A 机结论不得外推为
+  「本项目本机不可验证」**——2026-09-15 已在 B 机复验，见下条。
+- **task-20 复验（B 机，2026-09-15）**：M2 验收报告重跑为第二版
+  （`docs/acceptance-m2.md`：**11 通过 / 1 部分通过 / 2 未达标**，`m2-audio-pipeline` 仍暂缓）。
+  全量回归**全绿**：pytest **229 passed / 0 failed / 0 skipped**（A 机的 16 error + 1 fail
+  确系缺 vendor 二进制，非代码缺陷）、vitest **89 passed**、`tsc --noEmit` **0**、
+  eslint **0**、cargo test 全目标 **78 passed**（lib 74 + `audio_frames_wav` 1 +
+  `audio_ws_e2e` 3）、clippy `-D warnings` **0 告警**、playwright **1 passed**、
+  `vite build` 成功（82 modules，js 286.19kB/gzip 89.10kB）、`check_size.py`
+  **SIZE_REGRESSION_PASS**、`audio_regression.py --self-test` **SELFTEST_PASS**
+  （webrtc + silero 双 provider 实跑；B 机新装 `webrtcvad-wheels` + `silero-vad` 6.2.1 /
+  torch 2.14.0+cpu）。
+  **门槛1 三 Provider 全 PASS**（segment_end→asr_final 中位：faster-whisper **2195.5ms** /
+  paraformer **183.3ms** / sensevoice **203.8ms**，预算 4000ms）；
+  **门槛2 GATE2_PASS**（双路各 100 段零丢段零污染，RSS +3.9MB/601s）。
+  **撤回 A 机的一项建议**：A 机「faster-whisper 18.0s FAIL → 中文默认切 paraformer」
+  **作废**——那 18.0s 是 A 机被 `xray.exe`/`tun2proxy` 占满（推理仅剩 ~1.5 核）所致；
+  B 机同配置 2195.5ms **PASS**，故**默认 provider 无需改动**。
+  另新增 `scripts/e2e_m2_gate1_qa.py`：实测**真实 QA 直接路径**
+  （中位 **6.82ms**，n=10，真实 sidecar 子进程 + 真实 HTTP/SSE + 临时 DB），
+  取代 A 机引用的 M1 常量 2.4ms——门槛1 的两个加项现在**都是实测**。
+  **仍未闭（4 项，均非 B 机可闭）**：M2-7 `endpoint.rs` 缺件（唯一可写码项）、
+  M2-8 R19（需用户 6 样本录音）、G1 生成答案（需装 Ollama）、
+  M2-13 平台真机（需 macOS/Linux；Windows 设备枚举 B 机已实测为 Realtek / NVIDIA /
+  AMD / NVIDIA 虚拟共 4 个）。既有债务复现：`cargo fmt --check` 仍在 4 个未触碰文件上失败
+  （本轮未跨文件重排，待裁定）。
   本轮新装（PyPI 可达，GitHub/直连 HF 不通）：`sqlite_vec`、`numpy`、
   `sherpa-onnx==1.13.8`（+core 同版本，与锁 pin 一致）、`faster-whisper==1.2.1`
   栈（ctranslate2 4.8.2 / av 18.1.0，与锁一致）、`webrtcvad-wheels`、
@@ -347,18 +376,35 @@
      `StreamRebuilt`，且 seq/ts 不重启（`set_input_rate` 只换 resampler）。
   ③ Linux monitor（PulseAudio）与 macOS mic-only 未在本机（Windows）验证，
      需对应平台各跑一次 `cargo test`。
-- Rust 工具链（见「当前」节环境修正：**本盒子无 cargo**，此前“本机可用”是另一机器的结论，
-  已推翻）：有工具链机器上 `cargo check/test/clippy/fmt` + `cargo test --lib` 补跑；
-  余项为**壳**验证（需 Tauri 壳/真实桌面，与工具链无关）：
+- Rust 工具链：**B 机已复验完成（2026-09-15）**——`cargo test` 全目标 78 passed、
+  `clippy -D warnings` 0 告警（见「实测数字档案」task-20 条）。
+  仍缺的是**壳**验证（需 Tauri 壳/真实桌面，与工具链无关）：
   `$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志
   可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
-- vendor 二进制（本盒子 GitHub 不通取不到；有网机器）：按 `scripts/fetch-vendor.py`
-  头注释取 `libsimple-windows-x64.zip`（SHA `7f03cc28…bed0b`）落盘后，全量 pytest 复绿、
-  QA 链真机联测（门槛1固定答案端到端即从“合成总账”升级为真机实测）
+  （注：A 机的「本盒子无 cargo」只适用于 A 机，勿外推）
+- vendor 二进制：**B 机已闭合（2026-09-15）**——`sidecar/vendor/libsimple.dll`（1.5MB）就位，
+  全量 pytest 由 A 机的 137 passed + 16 error + 1 fail 变为 **229 passed / 0 failed / 0 skipped**；
+  QA 链真机联测已完成（`scripts/e2e_m2_gate1_qa.py`，门槛1 固定答案路径
+  由「引用常量」升级为**实测 6.82ms**，见 `docs/acceptance-m2.md` §2）
 - task-2 人工 DoD（有工具链机器）：① 手动 kill sidecar 的 python 进程 → 日志可见 `restart 1/3 in 1s`… 最多 3 次并恢复 health（计数在 health 恢复后清零）；② 连续 kill 致 4 连败 → 前端降级页（reason=restart_exhausted）+ 事件 sidecar://degraded；③ 伪造 protocol_version（如改 main.py PROTOCOL_VERSION="9.9"）→ 降级页 reason=version_mismatch；④ 应用退出后 tasklist 无残留 python sidecar 进程
 - Python 为 3.13.14（本机可用版本），PRD 要求 3.11——后续 CI/打包时需按 3.11 锁定验证
 
 ## 实测数字档案
+- **task-20 复验（B 机，2026-09-15）**：`pytest` **229 passed**（0 fail / 0 skip）；
+  `vitest` **89 passed**（4 文件：sse 4 / trigger 50 / liveqa 29 / api 6）；
+  `cargo test` 全目标 **78 passed**（lib 74 + `audio_frames_wav` 1 + `audio_ws_e2e` 3）；
+  `cargo clippy --all-targets -D warnings` **0 告警**；`playwright` **1 passed**；
+  `tsc --noEmit` **0**；eslint **0**；`vite build` 82 modules / js 286.19kB（gzip 89.10kB）；
+  `check_size.py` baseline=actual=200060425B，limit 230069488B（190.8 MiB）**PASS**。
+  门槛1（3s 段 ×3 次，真实权重 + 真实 uvicorn + 真实 WS）：faster-whisper
+  cold 2923.6 / 中位 **2195.5** / 2179.8–2223.8；paraformer cold 1829.6 / 中位 **183.3** /
+  181.9–191.0；sensevoice cold 1473.9 / 中位 **203.8** / 203.3–205.8（预算 4000ms，三者全 PASS）。
+  QA 直接路径（门槛原话「发货周期是多久」，direct 档零 LLM，n=10）：中位 **6.82ms** /
+  6.17–23.13，预热 2420.27ms。门槛2 soak：双路各 100 段 / 0 timeout / 0 失配 /
+  e2e 中位 1.5ms(loopback)、1.3ms(mic)；RSS 70.6→+3.9MB / wall 601s，**GATE2_PASS**。
+  VAD harness 定标：`SELFTEST_PASS`（webrtc + silero 双 provider）。
+  机器：Windows AMD64 / AMD Family 25 Model 80 / 12 逻辑核 / 31.9GB RAM / Python 3.13.14 /
+  cargo+rustc 1.98.1 + MSVC 2022 / git 2.55.0.windows.3。
 - 1b-3（2026-09-14，Windows/MSVC + rustc 1.98.1）：`cargo test` **35 passed**（audio 26：
   loopback 9 / resample 6 / frame 4 / cpal_common 3 / cpal_mic 2 / wasapi 2；其余 9 为
   既有 sidecar protocol/degradation/manager/security）+ 集成测试 `audio_frames_wav`

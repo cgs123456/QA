@@ -1,0 +1,19 @@
+{
+  "provider": "faster-whisper/base/int8/cpu",
+  "segment_s": 3.0,
+  "n": 3,
+  "cold_load_ms": 2923.6,
+  "asr_median_ms": 2195.5,
+  "asr_min_ms": 2179.8,
+  "asr_max_ms": 2223.8,
+  "hyp_text_len": [
+    670,
+    670,
+    670
+  ],
+  "direct_qa_ms_m1": 2.4,
+  "machine": "Windows AMD64, ?, Python 3.13.14",
+  "fixed_total_ms": 2197.9,
+  "fixed_budget_ms": 4000,
+  "fixed_pass": true
+}
