@@ -10,6 +10,12 @@
   表达式，这里并进 simple 池（同 route 取 max s，见 `hybrid_rank.fuse`）。
   理由见 `query_prep` 模块注释 ③。
 - 非中文查询（拼音/纯符号）没有关键词视图 → 两路都退回扩展原查询。
+- **高亮（F2.3）**：命中附 `hl_question` / `hl_answer`（`highlight()` 全列打标，
+  非截断摘要）。**按实际命中路选择高亮查询词**（坑位）：jieba 命用
+  keyword_expr 标，simple 命用 simple_expr / char_expr 标——两路 token 体系
+  不同（词 vs 字/拼音），混用会标错位置。每行自带其 MATCH 表达式的高亮，
+  调用方原样透传即可，无需二次判断。
+
 
 门限：保留 bm25 < -0.5；归一化 s = a/(a+T_fts)，a=max(0,-bm25)，T_fts=0.5
 （门限处 s=0.5）。**本轮未改**（R15）。已知特性：FTS5 idf =
@@ -32,6 +38,15 @@ from retrieval.query_prep import prepare
 T_FTS = 0.5
 BM25_CUTOFF = -0.5
 TOP_K = 5
+
+# highlight() 列索引（F2.3）：必须与 ft_qa 列序对齐（R4 高发区）。
+# structurally locked by test_highlight_column_lock（xinfo 顺序 + 行为双断言）。
+COL_QUESTION = 1  # standard_question
+COL_ANSWER = 2  # official_answer
+
+# 高亮标记（默认 `<mark>`；调标记串走 simple_highlight() 参数，前端按需替换）。
+HL_PRE = "<mark>"
+HL_POST = "</mark>"
 
 _STRUCTURAL_ERRORS = ("no such table", "no such tokenizer", "no such function")
 
@@ -94,11 +109,58 @@ def _search_route(conn, store_id: str, expr, route: str, top_k: int) -> list:
     return hits
 
 
+def simple_highlight(conn, store_id: str, qa_id: str, col_idx: int,
+                     expr: str, pre: str = HL_PRE, post: str = HL_POST):
+    """单条命中的列级高亮（F2.3 命名单元）。
+
+    对 `qa_id` 所在行，用**实际命中该行的表达式**跑 `highlight()`：
+    返回带标记的整列文本（非截断；无命中标记时返回原文）。
+    `col_idx` 仅接受 `COL_QUESTION` / `COL_ANSWER`（R4 列序，其它值大声拒绝）；
+    `expr` 为空返回 None（调用方回落原文）。本函数只抛结构性错误——
+    语法类问题由调用方按展示降级处理（见 `_attach_highlights`）。
+    """
+    if col_idx not in (COL_QUESTION, COL_ANSWER):
+        raise ValueError(f"高亮列非法：{col_idx}（只认 1=问题/2=答案）")
+    if not expr or not expr.strip():
+        return None
+    row = conn.execute(
+        "SELECT highlight(ft_qa, ?, ?, ?) FROM ft_qa JOIN qa_pairs q"
+        " ON q.rowid = ft_qa.rowid"
+        " WHERE ft_qa MATCH ? AND q.id = ? AND q.store_id = ?",
+        (col_idx, pre, post, expr, qa_id, store_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return row[0]
+
+
+def _attach_highlights(conn, store_id: str, hits: list, expr: str) -> None:
+    """就地给一批同路命中打标（expr 须是产出这批命中的那个表达式）。
+
+    高亮是展示层：单条失败只回落原文，**绝不**让检索变空（与 MATCH 语法兜底
+    同方向——展示降级，不是检索降级）。
+    """
+    if not expr:
+        return
+    for h in hits:
+        # 逐列独立 try：一列打标失败不影响另一列（展示降级，非检索降级）。
+        for col_idx, key in ((COL_QUESTION, "hl_question"), (COL_ANSWER, "hl_answer")):
+            try:
+                hl = simple_highlight(conn, store_id, h["qa_id"], col_idx, expr)
+            except Exception:
+                continue
+            if hl is not None:
+                h[key] = hl
+
+
 def fts5_search(conn, store_id: str, query: str, top_k: int = TOP_K, prepared=None) -> list:
     """关键词 OR（jieba）+ 扩展原查询（simple）+ 超短查询的汉字级并集。
 
     `prepared`：可选的 `query_prep.PreparedQuery`（调用方已算过就直接传，
     省一次 jieba 切词）；不传则就地预处理。
+
+    每行命中自带其 MATCH 表达式的高亮（`hl_question` / `hl_answer`，
+    缺席=该行打标失败，调用方回落原文）。
     """
     raw = (query or "").strip()
     if not raw:
@@ -107,16 +169,21 @@ def fts5_search(conn, store_id: str, query: str, top_k: int = TOP_K, prepared=No
 
     if prep.keyword_expr is None:
         # 非中文（拼音/纯符号）：没有关键词视图，两路都用扩展原查询。
-        return _search_route(
-            conn, store_id, _match_expression(conn, "jieba_query", raw), "jieba", top_k
-        ) + _search_route(
-            conn, store_id, _match_expression(conn, "simple_query", raw), "simple", top_k
-        )
+        jieba_expr = _match_expression(conn, "jieba_query", raw)
+        simple_expr = _match_expression(conn, "simple_query", raw)
+        jieba_hits = _search_route(conn, store_id, jieba_expr, "jieba", top_k)
+        _attach_highlights(conn, store_id, jieba_hits, jieba_expr)
+        simple_hits = _search_route(conn, store_id, simple_expr, "simple", top_k)
+        _attach_highlights(conn, store_id, simple_hits, simple_expr)
+        return jieba_hits + simple_hits
 
     hits = _search_route(conn, store_id, prep.keyword_expr, "jieba", top_k)
-    hits += _search_route(
-        conn, store_id, _match_expression(conn, "simple_query", raw), "simple", top_k
-    )
+    _attach_highlights(conn, store_id, hits, prep.keyword_expr)
+    simple_expr = _match_expression(conn, "simple_query", raw)
+    simple_hits = _search_route(conn, store_id, simple_expr, "simple", top_k)
+    _attach_highlights(conn, store_id, simple_hits, simple_expr)
     if prep.char_expr is not None:
-        hits += _search_route(conn, store_id, prep.char_expr, "simple", top_k)
-    return hits
+        extra = _search_route(conn, store_id, prep.char_expr, "simple", top_k)
+        _attach_highlights(conn, store_id, extra, prep.char_expr)
+        simple_hits += extra
+    return hits + simple_hits

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQA, type QASource } from "../hooks/useQA";
+import { markersForRoutes, renderHighlight } from "../lib/highlight";
 import { sourceLabel } from "../lib/sse";
 
 function preview(source: QASource): string {
@@ -10,17 +11,35 @@ function preview(source: QASource): string {
   return String(payload["standard_question"] ?? "");
 }
 
+/** 命中预览：有后端片段则渲染高亮（F2.3），否则回落 60 字纯文本。 */
+function HitPreview({ source }: { source: QASource }) {
+  const hl = source.type === "qa" ? source.hl_question : undefined;
+  if (hl == null || hl === "") {
+    return <span>{preview(source).slice(0, 60)}</span>;
+  }
+  return (
+    <span
+      data-testid="hit-hl"
+      dangerouslySetInnerHTML={renderHighlight(hl, markersForRoutes(source.routes))}
+    />
+  );
+}
+
 function AnswerCard({
   phase,
   action,
   text,
   resultKind,
+  provider,
+  degraded,
   error,
 }: {
   phase: string;
   action: string | null;
   text: string;
   resultKind: string | null;
+  provider: string | null;
+  degraded: string[];
   error: string | null;
 }) {
   if (phase === "error" || resultKind === "error") {
@@ -44,6 +63,13 @@ function AnswerCard({
           流式生成{phase === "streaming" ? "（生成中…）" : ""}
         </p>
         <p data-testid="answer-text">{text}</p>
+        {/* P8：实际出力 provider 标注（复用 asr_final degraded 模式）；无标注=单 provider。 */}
+        {resultKind === "llm" && provider != null && provider !== "" && (
+          <p data-testid="answer-provider">
+            实际出力：{provider}
+            {degraded.length > 0 && `（降级：${degraded.join("、")}）`}
+          </p>
+        )}
       </div>
     );
   }
@@ -89,7 +115,7 @@ export function Search() {
             {sources.map((s) => (
               <li key={`${s.type}:${s.key}`}>
                 <span data-testid="hit-tag">{sourceLabel(s)}</span>{" "}
-                <span>{preview(s).slice(0, 60)}</span>{" "}
+                <HitPreview source={s} />{" "}
                 <span>({s.score.toFixed(3)})</span>
               </li>
             ))}
@@ -104,6 +130,8 @@ export function Search() {
           action={action}
           text={text}
           resultKind={result?.kind ?? null}
+          provider={result?.provider ?? null}
+          degraded={result?.degraded ?? []}
           error={error}
         />
       </div>
