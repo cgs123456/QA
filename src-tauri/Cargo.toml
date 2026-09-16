@@ -40,6 +40,14 @@ rubato = "5.0.0"
 webrtc-vad = "0.4.0"
 tokio-tungstenite = "0.30.0"
 futures-util = "0.3.34"
+# S8：二维码生成（本地 WS 伴侣连接码）
+qrcode = "0.14"
+# S8：本地 IP 获取
+local-ip-address = "0.6"
+# S8：随机数生成（token）
+rand = "0.8"
+# S8：Base64 编码（token URL-safe）
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.24.0"
@@ -61,6 +69,12 @@ default = []
 # `tests/inject_e2e.rs`。**只给 dev/example**，不进生产构建。
 audio-testharness = ["dep:hound"]
 
+
+# 2026-09-16 磁盘体检：dev 默认 `debug = 2`，每个 crate 都产出完整 pdb，
+# `target/debug/deps/*.pdb` 堆到 7.3G（同名 crate 最多残留 9 份旧 hash）。
+# `line-tables-only` 只保留行号表——panic 与断点仍带行号，pdb 体积降一个数量级。
+[profile.dev]
+debug = "line-tables-only"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
@@ -86,3 +100,7 @@ required-features = ["audio-testharness"]
 [[test]]
 name = "inject_e2e"
 required-features = ["audio-testharness"]
+
+# S8 伴侣单测（无需 audio-testharness）。
+[[test]]
+name = "companion_test"

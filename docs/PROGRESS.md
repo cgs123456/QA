@@ -1004,37 +1004,50 @@
 > `142 ≠ 148` 四处记账漂移。**结论先行：四处均无法精确归因**（原因见 §3），
 > 防再漂移靠 §4 的纪律，不靠补算。
 
-### 1. 当前全量（2026-09-16，P6.1 本机实测；B 机本 shell，python 3.13.14）
+### 1. 当前全量（2026-09-16，**taskS5 本机实测**；B 机本 shell，python 3.13.14）
 
-- `pytest --collect-only -q` → **409 collected**；全量 `pytest`
- （`NO_PROXY=127.0.0.1,localhost`）→ **409 passed / 0 skipped**（~84s）。
- 归属：P12 基线 396（含 webrtcvad skip 1，本轮该依赖就位故 skip 归零）
-  + P6.1 新增 4（`test_eval` 字段解析校验 1 + `test_hybrid_rank` 救援 2 +
-  `test_answer_router` 分母剔除端到端 1）
-  + 并发 R19 会话新增 9（`test_audio_eval_vad` 6 + `test_audio_eval` 1 +
-  `test_asr_fallback` 2，其文件未提交、不归本任务，见 P6.1 条）。
-- `vitest run --reporter=verbose` → **167 passed / 12 files**（P12 实测，本任务零前端改动，未重跑）
-- `tsc --noEmit` **0** / `eslint src tests/e2e --max-warnings=0` **0**（P12 实测，同上）
+- `pytest --collect-only -q` → **498 collected**；全量 `pytest`
+ （`NO_PROXY=127.0.0.1,localhost`）→ **498 passed / 0 skipped**（~92s）。
+ **归因（409 → 498，+89，逐项可核）**：
+ - P6.1 基线 **409**（含 webrtcvad 依赖就位后 skip 归零）
+ - **+13 `test_session.py`**（S2 会话账：begin/end 幂等、迟到拒收、content-free、
+   失败不穿透、路由层；**另一会话所写**）
+ - **+11 `test_session_schema.py`**（S1：v002 迁移 10 + router↔index 交叉断言 1）
+ - **+8 `test_session_not_searchable.py`**（S1：R21 四道锁）
+ - **+18 `test_session_read.py`**（S1：`/sessions` 分页倒序、`/session/{id}` 时间线、
+   `DELETE` 物理删除、只读性、鉴权）
+ - **+22 `test_session_admin.py`**（S4 会话录制管理面：开关 / 保留策略 / 清除 / 导出 /
+   数据量；**另一会话所写**）
+ - **+17 `test_rehearsal.py`**（S5：抽题确定性/均匀性、类目、自评三档、content-free 记账、
+   S4 门禁、不污染检索索引）
+ 求和 409+13+11+8+18+22+17 = **498**，与 collected 一致。
+- `vitest run` → **236 passed / 16 files**（S5 实测；含 S3/S4 的 History/SessionDetail/
+  sessions 等前端用例。P12 基线 167/12 → 本任务 +19：`rehearsal.test.ts` 9 +
+  `Rehearsal.test.tsx` 10）
+- `tsc --noEmit` **0** / `eslint src --max-warnings=0` **0**（S5 实测）
 
 **1 skipped 的原因（E 项）**：唯 `webrtcvad` 可选依赖缺失时跳过一条 VAD 相关用例
 （导入期 `skipif` 判定）。与 C1b 行记录的 skip **同源**，**不是失败、不是漏测**；
 B 机装了 `webrtcvad-wheels` 故为 0 skipped —— 这就是 A/B 两机 skipped 数不同的全部原因。
 
-**pytest per-file（collected，P6.1 实测；求和 409）**：`test_llm_providers` 39 /
+**pytest per-file（collected，**taskS5 实测**；求和 498）**：`test_llm_providers` 39 /
 `test_embedding` 32 / `test_import_p1` 29 / `test_asr_fallback` 27 /
-`test_query_prep` 19 / `test_audio_protocol` 17 / `test_audio_eval` 16 /
+**`test_session_admin` 22** / `test_query_prep` 19 / **`test_session_read` 18** /
+**`test_rehearsal` 17** / `test_audio_protocol` 17 / `test_audio_eval` 16 /
 (`test_export_import` `test_llm_fallback`) 各 15 /
-(`test_asr_text_clean` `test_local_agreement`) 各 13 /
-(`test_hybrid_rank` `test_sherpa_providers` `test_highlight`) 各 11 /
+(**`test_session`** `test_asr_text_clean` `test_local_agreement`) 各 13 /
+(**`test_session_schema`** `test_hybrid_rank` `test_sherpa_providers` `test_highlight`) 各 11 /
 `test_low_latency` 10 / `test_answer_router` 9 /
-(`test_retrieval` `test_asr_switch` `test_migrations` `test_diagnostics_degrade`) 各 8 /
+(**`test_session_not_searchable`** `test_retrieval` `test_asr_switch` `test_migrations`
+`test_diagnostics_degrade`) 各 8 /
 (`test_knowledge_compiler` `test_providers` `test_connection`) 各 7 /
 `test_qa_stream` 6 / `test_audio_eval_vad` 6 /
 (`test_prompt_guard` `test_simple_extension` `test_routers` `test_model_download`
 `test_downloader` `test_auth` `test_vector_search` `tests/eval/test_eval`) 各 5 /
 (`test_settings` `test_embedder` `test_diagnostics`) 各 4 /
 `test_auth_coverage` 2 / (`test_rollback` `test_health`
-`tests/eval/test_eval_full`) 各 1（求和 409，与 collected 一致）。
+`tests/eval/test_eval_full`) 各 1（求和 498，与 collected 一致）。
+**粗体**为相对 P6.1 基线新增/变动的文件（`test_session*.py` 五个文件 + `test_rehearsal.py` = 89 条）。
 
 **vitest per-file（本轮实测）**：trigger 50 / liveqa 30 / capture 28 / importFlow 15 / api 7 /
 ReviewPanel 6 / EmbeddingConfig 6 / ColumnMapping 5 / Knowledge 4 / windowView 4 / sse 4 /
@@ -1323,6 +1336,44 @@ highlight 8 = **167**。
   立档，此后所有会话引用此档；复测入口 `scripts/net_probe.py [--direct]`）。
   注册表代理（`ProxyEnable=1`，`127.0.0.1:7897` OPEN）Python 侧等价于无代理
   （httpx/urllib 不读注册表），显式走 7897 同样全通——代理不是变量。
+  **三数（轮换后 key，进程环境变量注入、用后即清，未落盘）**：
+  ① `e2e_llm --provider openai`（gpt-4o-mini，“有优惠吗”→llm）→
+  `FIRST_TOKEN_S=3.09 TOTAL_S=3.30 ACTION=llm`（P4 首字台账 openai 行关闭）；
+  ② `bench_embedding --n 20` → `EMBED_N=20 EMBED_S=2.22 TOKENS=164 DIM=3072`
+  （P5 cloud 台账关闭）；③ G1 云端路径：2202.3 + 3300 = **5502.3ms ≤ 6s PASS**
+  （M2 G1 关闭，援引“任一路达标即可关账”；M3 #13 改判通过、#14 改判部分通过；
+  local-first 默认不变；Ollama 本地仍缺记注）。claude/gemini/groq 仍缺 key（exit 2 未跑）。
+- P6.1 补盲区 + 重锚 + verdict 翻转（2026-09-16，B 机）：
+  评测集 v2：冻结 100 行未动，追加 24 行（21 裸字段名探针 `expected_field` 新键 +
+  3 null：“退货政策”别名精确对抗 + “支持货到付款吗” + “你们公司在哪”），124 题 =
+  87 scored + 16 null + 21 field；常量不位移；裸字段名救援（top 非字段 + top1<TH_DIRECT
+  + 字段名精确 s=1.0 → 该字段 direct；QA 过线优先；别名精确不触发）。
+  Top-3 **0.9080** / null **16/16** / direct 63对14错（机器；裁决 7，0.088 持平）/
+  field **12/21**（11 救援 + 1 平局）；v3 子集 103 题逐项零回归。M1 #6 翻转通过、M3 #1 刷新 v2。
+- R19 音频回归：替身样本打通 runner + 两个口径缺陷修复（2026-09-16）：
+  公开语料构造 6 替身样本（FLEURS zh / LibriSpeech en / ESC-50 noise / multi 双人），
+  三张表首次出数。修复：① 繁简归一（`to_simplified()` + opencc）② 幻觉过滤
+  （`compression_ratio > 2.4` 丢弃 + 纯文本重复守卫）。zh WER 56.5%→29.6%。
+  产出 `docs/audio-regression-standin.md`（**独立于**验收报告，避免替身数字冒充真实验收）。
+- Phase 3 / taskS0：M4 范围对表（产出 `docs/m4-scope.md`，**待主人确认**）：
+  从 PRD §6.3/§6.4 提取 Phase 3 9 项（S1~S8），代拟标准、依赖、裁剪记档。
+  F11.3/Rehearsal/Excel-PDF 导出三项裁定落盘。S1~S8 派单优先级表已定，**待确认再派 S1+**。
+- Phase 3 / taskS10：纯 Rust 后端可行性评估（产出 `docs/tech-eval-pure-rust.md`）：
+  ASR(whisper-rs 模型格式不兼容/多 Provider 缺失) + PDF(lopdf 质量回退) 为最大阻力；
+  <15MB 目标不可达（预估 85-135 MiB，模型权重物理下限）；迁移 6-8 周净值为负，**不建议 Phase 4 全量迁移**；
+  建议：Phase 4 保留 Python Sidecar 发布 v1.0；Phase 5+ 局部 Rust 化（embedding/向量优先）。
+- Phase 3 / taskS1~S6：session 会话边界/历史/录制/Rehearsal/验收/M4：
+  完整落地：session 迁移 v002 + R21 四道锁 + 读/删端点 + 录制管理面 + Rehearsal 最小版（自评不接 LLM）+
+  M4 验收（2 部分通过/1 未通过/4 未派单，m4-enhancements tag 暂缓）+ CI 修复（pnpm 版本锁定修好，
+  pip 失败环境差异未改）。全绿：pytest 498 / vitest 236 / tsc 0 / eslint 0 / cargo test 163 / clippy 0 / fmt 0。
+- P13 终结可达/不可达矛盾 + 云端三数（2026-09-16，B 机本 shell）：
+  **机制**：TUN 透明劫持（DNS 吐 `198.18.0.46`/`fdfe::/48` 保留段、`8.8.8.8` 0–12ms 本地终结）
+  + 间歇性秒级首包抖动（api.openai.com / groq TCP 建连轮转 ~5s）。M3 的 1s 超时裸 TCP
+  探针撞抖动即判死（误判）；HTTP 层三次运行 12/12 个 401/400（对端活着并拒绝假 key），
+  与 P4 的 <1s 口径一致。**以后可达性只看 HTTP 状态码，不看裸 TCP**（`docs/network-baseline.md`
+  立档，此后所有会话引用此档；复测入口 `scripts/net_probe.py [--direct]`）。
+  注册表代理（`ProxyEnable=1`，`127.0.0.1:7897` OPEN）Python 侧等价于无代理
+  （httpx/urllib 不读注册表），显式走 7897 同样全通——代理不是变量。
   **三数（主人提供轮换后 key，进程环境变量注入、用后即清，未落盘）**：
   ① `e2e_llm --provider openai`（gpt-4o-mini，“有优惠吗”→llm）→
   `FIRST_TOKEN_S=3.09 TOTAL_S=3.30 ACTION=llm`（P4 首字台账 openai 行关闭）；
@@ -1376,3 +1427,494 @@ highlight 8 = **167**。
   标定结果 v2、补充规则 +1（救援两条护栏）、null 16/16；常量数值不动。
   DoD：Top-3 0.9080 ✅ / null 1.000 ✅ / 答错 machine 15（s0 35↓）裁决 7 ✅ /
   pytest 全绿（见下）。
+
+- **R19 音频回归：替身样本打通 runner + 两个口径缺陷修复（2026-09-16）**：
+  **背景**：主人指示「真人录音去网上搜集下载一段测试即可」→ 用公开语料构造 6 个
+  **替身样本**（非实录），三张表**首次出数**（此前全 PENDING）。
+  **样本**（`scripts/build_audio_samples.py`，可复现）：zh = FLEURS `cmn_hans_cn` dev
+  （CC-BY-4.0）；en = LibriSpeech test-clean（CC-BY-4.0）；noise = ESC-50 键盘/吸尘器/引擎
+  （CC-BY-NC-3.0，主人已裁定可接受）；multi 槽用**两个不同说话人**交替拼接。
+  全部 16000Hz/单声道/16-bit。标注 `segments` 由**能量法**给出 → 各 json 标
+  `segments_source`，**不是人工标注**，故 R19 的边界精度结论仍不能出。
+  **表1（VAD 边界）**：noisy 槽**有判别力** —— webrtc 两个槽各漏 1 段、offset 拖尾
+  2895ms/3768ms；silero 同条件 0 missed、offset 误差 0.2~0.8s。这是 silero 相对
+  webrtc 的实质优势证据（对比 `--self-test` 合成信号全饱和无判别力）。
+  **表2（WER）**：修前 zh 56.5/52.6/172.9%、en 14.9/13.6/13.6%；**修后 zh 29.6/24.4/32.3%**、
+  en 不变。两个缺陷都已闭合：
+  ① **繁简未归一** —— `audio_eval/metrics.py` 的 zh 分支原无繁简转换，而 faster-whisper
+     输出繁体、参考是简体 → 逐字全不匹配，中文 CER 虚高一倍。修法：`to_simplified()`
+     走 opencc `t2s`（两侧都归一，缺依赖即抛不静默跳过）；
+     依赖 `opencc-python-reimplemented==0.1.7` 进**主锁**（metrics.py 在 sidecar/src 内）。
+  ② **尾部静音触发 whisper 幻觉** —— zh-multi 的 172.9% 是假的（语音结束后循环输出
+     「请问您的设计设计设计…」100+ 字，hyp 213 字 vs ref 96 字）。
+     `condition_on_previous_text=False` 与 `temperature=0.0` **本来就开着**，挡不住。
+     实测阈值依据：正常段 `compression_ratio` **1.06–1.63** / 幻觉段 **8.77**
+     （`no_speech_prob` 0.01–0.07 vs 0.66）。修法：`faster_whisper_provider._filter_degenerate()`
+     丢弃 `cr > 2.4`（whisper 官方默认）的段 + 纯文本重复守卫兜底；
+     丢弃数记 `provider.dropped_segments`（只计数，R14）。**不违反 R11**：不引入 VAD，
+     只丢弃已生成的退化文本。遗留：这是输出侧过滤，根治需在喂 ASR 前裁尾部静音。
+  **表3（端到端延迟）**：**1~2ms**（传输+协议下限，`--asr stub` 口径）。
+  **产出**：`docs/audio-regression-standin.md`（**刻意独立于** `docs/audio-regression.md`，
+  避免替身数字冒充验收数据）；`sidecar/tests/audio_samples/README.md` 加替身说明与用途边界；
+  `sidecar/requirements-eval.txt`（**新建**，测量依赖刻意与主锁分开 —— 遵守
+  `test_audio_eval_vad.py` 的「测量依赖不进主锁文件」约定）。
+  **DoD 数字**：`pytest` **409 passed / 0 skipped**（此前 396 passed / 1 skipped；
+  可核实增量：+3 本轮新增用例、+6 `test_audio_eval_vad.py` 因 webrtcvad/silero 到位整文件解封）。
+  **文件清单（供 G0 切分）**：新增 `scripts/build_audio_samples.py`、
+  `docs/audio-regression-standin.md`、`sidecar/requirements-eval.txt`；
+  改动 `sidecar/src/audio_eval/metrics.py`、`sidecar/src/asr/faster_whisper_provider.py`、
+  `sidecar/requirements-lock.txt`、`sidecar/tests/{test_audio_eval,test_asr_fallback}.py`、
+  `sidecar/tests/audio_samples/{README.md,manifest.json}`。
+  **另**：`.gitignore` 补密钥类覆盖（`.env`/`*.key`/`credentials*` 等，此前完全缺失）。
+
+- **Phase 3 / taskS0：M4 范围对表（2026-09-16，产出 `docs/m4-scope.md`，**待主人确认**）**：
+  先读 `phase-2.json`（P12/P13/P6.1 三任务结论已知）。**两个前提问题**：
+  ① **「仓内 PRD」不存在**（`git ls-files "*.md"` 无 PRD、`git grep F11.3/§6.4` 零命中；
+  权威件在仓外桌面根目录 `interview_copilot_prd_v1.0.md` v1.0/1416 行）—— P12 已记过一次，
+  建议落仓 `docs/prd-v1.0.md`；② **§6.4 没有验收标准表**（6.1/6.2/6.3/6.5 都有，
+  只有 Phase 3 只有「评估点」）→ M4 无法判定，故 scope 表的「标准」列由 S0 **代拟**并逐项标注。
+  **双向对表**：§6.4 有而 F 清单无编号 2 项（三平台 CI / 纯 Rust 路线评估）→ 补派 S7/S8；
+  F 清单有而 §6.4 漏列 2 项（**F9.3 练习报告**、**F12.3 本地仪表盘**）→ 判笔误补进派单。
+  Phase 3 全部 9 项均为 **P2**（无 P0/P1）。
+  **三个确认项**：① **F11.3 定义全空** —— PRD 仅两处一行（§2.2 + §6.4 W3），
+  「录什么/存多久/给谁看」三项均无；已给建议默认 + 红线（必过 `stealth-boundary.md` §2；
+  录音**必然含内容**，R14 content-free 不适用于音频本身），**未确认前 S4 不动手**；
+  ② **Rehearsal 页规格无细则** → 裁定按 S5 默认设计执行，**S5 必须先出 `docs/rehearsal-spec.md`**；
+  ③ **Excel/PDF 不在 §6.4** —— 导出 = F4.5/F11.6 = **JSON/Markdown 双格式**，Excel/PDF 只在
+  **导入**方向（F3.3/F3.4/F3.7）→ **P12「双格式勘误」成立、无需开新项**，且不依赖 PRD 是否回仓。
+  **裁剪记档**：R19 留 M3 §7；平台真机/前端目检**并入 Phase 3 前置**（挂 S7/S1，是依赖不是功能）；
+  `dist-sidecar` 重建留 M3 §7.2；CI 3.11 matrix 并入 S7；torch DLL 坏记工程债；
+  P8 偏差三项待主人一句话。
+  **派单提案**：S1 模板 / S2 仪表盘 / S3 手机伴侣 / S4 录制回放 / **S5 Rehearsal（主人已固定）**
+  / S6 自动更新 / S7 三平台 CI / S8 纯 Rust 评估。**确认后才派 S1+。**
+
+- **Phase 3 / taskS2：采集启停 ↔ 会话边界（2026-09-16）**：
+  **一句话**：采集服务启停现在等于一次会话的开关（`POST /session/begin|end`），
+  会话存在期间链路上的事实以 **content-free** 形式落 `session_events`
+  （`asr_final` / `asr_error` / `qa_exchange`），E2E 用真 sidecar 的账复核段数。
+  **无新 WS 通道**：音频 WS 契约一字未改，token 走既有 Bearer 通道。
+  **三条裁定（任务书未定处）**：
+  ① **不可达 → 放弃 + 计数，不缓冲重放** —— Rust 侧只加 `begin_misses`/`end_misses`，
+  本地不排队不补发；**失败不回滚采集**（采到音频却因"记账没成功"拒绝开流，是把观测面
+  当依赖）。代价如实记录：那一段音频不属于任何会话。
+  ② **幂等放在对端** —— 重复 begin 不新建会话、不重复写 `session_begin`，
+  只计 `begin_duplicate` 并回同一 id（客户端崩了就没机会去重）。
+  ③ **end 之后的迟到事件一律拒收** —— 落行者侧计 `late_events_rejected` 不落库；
+  Rust 侧同一规则由**世代号**守：停止之后到达的 begin 回执不许把状态改回"已开"
+  （`stale_results_rejected`），客户端另用一把异步锁把 begin/end 串行化（排队上界 1）。
+  **实现面**：`sidecar/src/routers/session.py`（begin/end/status/event + `record_event()`
+  是会话账唯一写入口，白名单 `asr_final|asr_error|qa_exchange`）；
+  `src-tauri/src/audio/session.rs`（纯状态机 + 可注入 transport + `HttpTransport`）；
+  `CaptureService::start/stop` 接线，`ServiceSnapshot` 增 `session` 段（停完仍在，
+  与 `paths` 同理）；前端 `capture.ts` 的 `sessionBadge()` 在 LiveQA 采集状态行做
+  **常驻**标识（`● 录制中 · 会话 ses_0001` / `○ 未录制（会话边界降级 n 次）`），
+  设置页加会话诊断行；LiveQA/Teleprompter 的**事件订阅一字未动**。
+  **顺带修的一处 harness 缺陷**：`tests/support/fake_sidecar.rs` 原先在 **TCP accept**
+  时就把连接登记进 `connections()`，而假 sidecar 的端口上现在还有会话边界的 HTTP
+  请求（真 sidecar 上这两条路由确实同源）→ 一个 HTTP 请求会变成一条"永远没有 path
+  的连接"，`wait_for_paths()` 与 `connections().len()` 两类断言集体失败。
+  改为**握手成功后登记**（语义也更准：一条连接 = 一次完成的 WS 握手）。
+  **DoD 数字**：  `cargo test --lib` **161 passed**（新 15 条会话单测：启停映射 /
+  降级计数 / 重复 begin 幂等 / end 后迟到拒收 / 默认值契约 / 传输层 5 条）；
+  `cargo test` **176 passed**（默认配置）、**191 passed**（`--features audio-testharness`）；
+  `inject_e2e` **4 passed**，新增 `INJECT_SESSION_PASS segments=3 asr_final=3
+  qa_exchange=1 begin_misses=0 end_misses=0 stale_results=0`（loopback 2 段 + mic 1 段，
+  与参考端点段数逐项一致；`qa_exchange` 字段完整性由 `/session/status` 的
+  `event_fields` 断言 9 个 key 一个不少）；
+  `pytest` **440 passed**（逐文件枚举，见下）；
+  `vitest` **174 passed / 12 files**（+7 会话标识与诊断行）、`tsc` **0**、`eslint` **0**；
+  `cargo clippy --all-targets -- -D warnings` **0 告警**、`cargo fmt --check` **0**。
+  **pytest 440 的构成（诚实拆分，不把别人的数算成自己的）**：
+  409（P6.1 基线）+ 13（本任务 `test_session.py`）+ 18（**并发 S1 会话**新建的
+  `test_session_schema.py` 10 条 / `test_session_not_searchable.py` 8 条，
+  本任务未碰这两个文件）。
+  **与 taskS1 的交接（已接上）**：并发会话的 `v002_session_timeline.py` 把
+  `session_id`/`store_id`/`ts_ms` 提成了**列**并建了
+  `COALESCE(列, json_extract(metadata,...))` 索引，迁移文档里明确留了
+  「后续把 `record_event` 改成同时填列即可（一行）」的交接项。本任务已接：
+  `stores.log_event` 增三个可选列参数，`routers/session.py::_persist` 同时填列与
+  metadata —— **列给索引（不走 JSON 提取），metadata 让一行自解释**；
+  新行走"列命中"、旧行（仅 metadata）走回退，落在同一个索引里。
+  新增 `test_recorded_rows_fill_the_v002_timeline_columns` 钉住这条交接。**。
+  **文件清单（供 G0 切分）**：新增 `sidecar/src/routers/session.py`、
+  `sidecar/tests/test_session.py`、`src-tauri/src/audio/session.rs`；
+  改动 `sidecar/src/app.py`、`sidecar/src/routers/{audio,qa}.py`、
+  `sidecar/src/knowledge/stores.py`（`log_event` 增 `stage`）、
+  `sidecar/tests/test_auth_coverage.py`、`scripts/serve_audio_e2e.py`（`--session-db`）、
+  `src-tauri/src/audio/{mod,service}.rs`、`src-tauri/src/commands/audio.rs`、
+  `src-tauri/tests/inject_e2e.rs`、`src-tauri/tests/support/fake_sidecar.rs`、
+  `src-tauri/tests/capture_service_wiring.rs`、
+  `src/lib/{capture.ts,capture.test.ts}`、`src/pages/{LiveQA,Settings}.tsx`、
+  `docs/api-contract.md`、`docs/PROGRESS.md`。
+  **已知边界（如实记录）**：① 进程退出路径 `request_stop()` **刻意不发 end** ——
+  进程与 sidecar 一起消失，会话边界由 sidecar 的进程生命周期界定；
+  ② 假 sidecar（无 HTTP 面）上的用例会打印一条 `[session] begin degraded`，
+  那是真实结论（那个对端确实没有 /session/begin），不是噪声掩盖的失败。
+
+- **Phase 3 / taskS3：历史会话列表 + 单会话时间线（2026-09-16）**：
+  **一句话**：`pages/History.tsx`（列表 + 删除 + 空态）、`components/SessionDetail.tsx`
+  （时间线）、`hooks/useSessions.ts`（TanStack Query：列表 60s / 详情 300s / 状态 10s）、
+  `lib/sessions.ts`（纯渲染逻辑）、`lib/api.ts` 补 4 端点封装；App 加「历史会话」页签。
+  **后端不重造**：`GET /sessions`、`GET /session/{id}`、`DELETE /session/{id}` 由
+  并发 S1 会话在 `routers/session.py` 实现（S1 第 2 项），本任务只按它的真实形状接线 ——
+  并用真 sidecar 跑了一轮冒烟核验形状（字段类型逐项对过，见下）。
+  **两条待主人裁定（都是前提问题，不是缺代码）**：
+  ① **时间线里没有文本** —— 任务书要的「asr_final 文本 / 问题·答案」在库里**不存在**：
+  会话账按 **R14** 是 content-free 的（写入侧只记数字与枚举，见 `routers/audio.py`、
+  `qa.py` 的 docstring 与 S1 的 `test_session_not_searchable.py`）。冒烟确认 metadata
+  里确实只有 `segment_id/duration_ms/provider/degraded_levels/dropped_oldest/session_id`
+  与 `action/provider/llm_calls/sources/warnings/top1_score/store_id/elapsed_ms`。
+  故时间线上文本位置一律明示「**未落盘（R14）**」而不是留白（留白会被读成"这次没说话"）。
+  要真显示文本，必须先裁 **F11.3「录什么 / 存多久 / 给谁看」**（`m4-scope.md` §3.1
+  已记：**未确认前 S4 不动手**）并过 `stealth-boundary.md` §2 —— 那会改写入格式，
+  属 S4 范围，本任务不自行改判。
+  ② **列表没有问答数** —— `GET /sessions` 只给总账行数 `events`，不下发 `qa_exchanges`。
+  本任务**不做"用总行数冒充问答数"的近似**（那种近似会让"问了 5 个问题"变成"有 5 行账"）：
+  类型里留了可选字段 `qa_exchanges?` 做前向兼容，未下发时列表如实显示
+  「账 N 行（未分解）」。要分解需 S1 在列表端点加一个 `SUM(event_type='qa_exchange')`
+  计数字段；**该文件正被并发会话改，本任务不进去动手**。
+  **R21（UI 面）**：时间线是回放，不触发任何检索。`lib/sessions.ts` 与
+  `components/SessionDetail.tsx` 不引用 `askQuestion` / `useQA` / `/qa/ask`，
+  由 `sessions.test.ts` 的**源码级断言**（`?raw` 读源码）守住 —— 靠自觉不够。
+  **DoD 数字**：`vitest` **211 passed / 14 files**（+37：sessions.test.ts 24 +
+  History.test.tsx 13）、`tsc` **0**、`eslint` **0**。
+  **形状核验（真 sidecar，非文档推测）**：`/sessions` 的
+  `session_id/started_ms/last_ms/events/store_id/closed` 六项类型全对；
+  `/session/{id}` 的 `id/event_type/stage/ts_ms/store_id/metadata` 六项全对；
+  `qa_exchanges` 确认未下发；404（无此会话）/ 409（删进行中的）/ 删已结束返回
+  `{session_id, deleted: 5}` 三条分支实测与前端文案一致。
+  **文件清单（供 G0 切分）**：新增 `src/pages/History.tsx`、`src/pages/History.test.tsx`、
+  `src/components/SessionDetail.tsx`、`src/lib/sessions.ts`、`src/lib/sessions.test.ts`、
+  `src/hooks/useSessions.ts`；改动 `src/lib/api.ts`、`src/App.tsx`、
+  `docs/PROGRESS.md`。
+  **🔲 壳内走查清单（Tauri 壳不可启动，待人工，History 五步）**：
+  1. 空态：打开「历史会话」应显示"还没有任何会话账"+"去设置开启录制"，点按钮跳到设置页；
+  2. 产生一条：开始采集 → 说几句话（并触发一次问答）→ 停止，列表应出现该条，
+     时间/时长/库名正确，未 end 的标"未正常结束"；
+  3. 看时间线：点开该条，行按时间升序，转写卡与问答卡各就各位，文本位置显示
+     「文本未落盘（R14）」；**全程设置页诊断计数不变**（证明回放没有发起检索）；
+  4. 删除流：点删除 → 确认框含"转写文本将被永久删除" → 取消则列表不变；
+     确认则列表少一条、再点开同 id 不会看到残留的旧详情；
+  5. 进行中守卫：采集期间该条标"进行中"且删除按钮禁用；停止后恢复可删。
+
+- **Phase 3 / taskS4：会话录制的用户面（2026-09-16）**：
+  **一句话**：设置页新增「会话录制」区（开关 / 保留策略 / 立即清除 / 数据量），
+  单会话 JSON 导出挂在历史详情；**录制开关默认关**，关着时 `/session/begin`
+  不建会话、不落任何行。
+  **后端落在新模块 `routers/session_admin.py`**（管理面），
+  与 `routers/session.py`（运行时面）分开 —— 管理面的每个动作都是隐私相关的
+  （删 / 导出 / 决定记不记），单独成区便于审计。对 `session.py` 只做了**三处外科编辑**：
+  `_COUNTERS` 加 `begin_disabled`、`session_begin` 加门禁（延迟 import 避免循环）、
+  返回值加 `recording` 标志。
+  **三条裁定（任务书未定处）**：
+  ① **默认关闭，且"关"是保守默认值** —— 开关没存过 / 文件读不出来 / 值不合法
+  一律按关闭；关着时**不计 `begin_misses`**（那是"想记没记成"的降级，这里是本分）。
+  Rust 侧对应 `SessionStats.disabled_skips`，前端 badge 说「未开启」而不是「降级」。
+  ② **保留策略按「最后一次活动」（`MAX(ts_ms)`）判定；非法值按「永久」处理**
+  —— 开关与保留策略的保守方向**相反**：开关决定"要不要记"（不记更安全），
+  保留策略决定"要不要删"（不删更可逆）。清理是 **sidecar 启动时的惰性任务**
+  （`main.init_storage()` 里一次），不是常驻定时器，且**幂等**。
+  ③ **清除全部 / 到期清理都跳过活动会话**，清除全部在有活动会话时直接 **409**。
+  **导出只做 JSON**：`knowledge/exporter.py` 的 `render_markdown` 是**知识库专用**
+  （按 entity 分 H1 / 问答分块），会话账没有对应渲染器 → 按「无则不新建」裁定不做 MD。
+  JSON 侧沿用 P9 纪律：列清单 `SESSION_EVENT_COLUMNS` 显式声明、无时钟字段
+  （故两次导出逐字节相同）、有测试断言清单 == 线上 schema 列 − 排除项。
+  **设置持久化**：文件 `session-recording.json`（与 DB 同目录，走
+  `INTERVIEWCOPILOT_DB`），原子写（tmp + `os.replace`）。**不加表** ——
+  `schema.py` / `migrations/` 是并发 S1 会话在改的文件，不进去添乱。
+  **DoD 数字**：`pytest` **481 passed**（见下方逐文件拆分）、`vitest` **217 / 14 files**（+6）、
+  `tsc` **0**、`eslint` **0**、`cargo test --lib` **163 passed**（+2 录制门禁单测）、
+  `cargo test` **176**（默认）/ **194**（`--features audio-testharness`）、
+  `clippy --all-targets -D warnings` **0**、`fmt --check` **0**；
+  `inject_e2e` 4 passed（会话用例改用 `--session-recording` 显式开录制，并断言 `disabled_skips=0`）。
+  **pytest 481 的逐文件拆分（诚实归因，不把别人的数算成自己的）**：
+  409（P6.1 基线，**未变**）+ 13（`test_session.py`，S2 我的）+ 22（`test_session_admin.py`，**S4 我的**）
+  + 37（`test_session_read` 18 / `test_session_schema` 11 / `test_session_not_searchable` 8，
+  **并发 S1 会话的，本任务未碰**）。
+  **文件清单（供 G0 切分）**：新增 `sidecar/src/routers/session_admin.py`、
+  `sidecar/tests/test_session_admin.py`、`src/components/SessionRecording.tsx`、
+  `src/hooks/useSessionRecording.ts`；改动 `sidecar/src/routers/session.py`（3 处外科编辑）、
+  `sidecar/src/app.py`、`sidecar/src/main.py`、`scripts/serve_audio_e2e.py`（`--session-recording`）、
+  `src/lib/api.ts`、`src/lib/sessions.ts`、`src/lib/sessions.test.ts`、`src/lib/capture.ts`、
+  `src/lib/capture.test.ts`、`src/components/SessionDetail.tsx`、`src/pages/History.tsx`、
+  `src/pages/History.test.tsx`、`src-tauri/src/audio/session.rs`、`src-tauri/tests/inject_e2e.rs`、
+  `docs/PROGRESS.md`。
+  **🔲 壳内走查清单（Tauri 壳不可启动，待人工，四步）**：
+  1. **默认关**：全新状态打开设置 → 「开启会话录制」未勾选；开始采集说几句话 →
+     历史会话**不新增任何条目**，采集状态行显示「○ 未录制（会话录制未开启）」；
+  2. **打开开关**：勾上 → 采集 + 说几句话 + 触发一次问答 → 停止 → 历史会话出现一条
+     （时间 / 时长 / 库名正确，badge 变成「● 录制中 · 会话 x」）。
+  3. **保留策略**：设为「保留 7 天」→ 把某条会话改到 8 天前 → 重启 sidecar 后该条消失、
+     未过期的不动；**再重启一次**应无删除、无报错（幂等）。
+  4. **清除 + 导出**：点「立即清除全部会话」→ 二次确认含「全部…不可恢复」→
+     取消不删、确认后列表与数据量归零；**采集进行中**时该按钮禁用并提示先停止采集。
+     在历史详情点「导出 JSON」→ 落 `session-<id>.json`，内容与库内一致。
+  **已知边界**：保留策略的"到期"只在 **sidecar 启动**时结算 —— 长时间不重启的
+  进程里，过期会话会一直留到下次启动；这是刻意的取舍（见裁定 ②）。
+
+- **Phase 3 / taskS1（**不重叠切片**）：`session_events` v002 迁移 + R21 检索隔离（2026-09-16）**：
+  **背景**：主人派 S1 时，另一会话正在实现同一块（session 相关文件 mtime 全在 2 分钟内）
+  → 主人裁定「只做不重叠切片」。本轮**完全没碰** `routers/session.py`、`audio.py`、`qa.py`、
+  `knowledge/stores.py`、`tests/test_session.py`、`tests/test_auth_coverage.py`。
+  **1. schema 迁移 v002（任务书第 1 项）**：`migrations/v002_session_timeline.py`（新）
+  给 `session_events` 增补 `session_id / store_id / ts_ms`；`schema.py` 注册，
+  `CURRENT_VERSION` **1 → 2**。任务书建议列里 `kind` / `payload_json` **不新增** ——
+  v001 已有等价列（`event_type` / `metadata`），再加就是同义重复。
+  迁移做两件接续工作：① **回填**（写入方把归属放在 `metadata["session_id"]/["store_id"]`，
+  迁移提级到列；`ts_ms` 从 v001 秒级 `timestamp` 回填，精度如实降级）；
+  ② **守卫表达式索引**（`COALESCE(session_id, CASE WHEN json_valid(metadata) THEN
+  json_extract(...) END)`）—— 今天就走索引、写入方填列后无需改索引。
+  **实测坑**：`json_extract` 对非法 JSON 会抛 `malformed JSON`（sqlite 3.53.1），
+  不加 `json_valid` 守卫则**一行脏数据就让整个迁移回滚**。
+  **2. R21 四道锁（任务书第 4 项）**：`tests/test_session_not_searchable.py`（新，8 例）——
+  ① 结构锁（虚拟表白名单恰为 `{ft_qa, vec_qa_local, vec_qa_cloud}`；会话账无影子表）；
+  ② 源码锁（`src/retrieval/**` + `/knowledge/search` 全量 grep 零命中）；
+  ③ **行为锁**（灌 500 行会话账后同一查询结果**逐字不变**）；
+  ④ 白名单锁（新增虚拟表必须改测试）。**qa.py 刻意不在源码锁内**（它合法 import 会话账）。
+  **3. 既有测试更新**：`test_migrations.py` 两条硬编码 v1 的用例改为钉死字面量 2
+  （只比 `CURRENT_VERSION` 是"自己跟自己比"）。
+  **DoD 数字**：`pytest` **439 passed / 0 failed**（另一会话 S2 收工时 421，+18 全为
+  `test_session_schema.py`(10) + `test_session_not_searchable.py`(8)）。
+  **未做（待对方窗口确认关闭后追加）**：任务书第 2 项的 `GET /sessions`（分页倒序）、
+  `GET /session/{id}`（时间线）、`DELETE /session/{id}` + 对应 api-contract 行与
+  鉴权覆盖行 —— 对方 S2 的 api-contract 只记了 `begin|end` / `status` / `event` 四个端点。
+  **文件清单（供 G0 切分）**：新增 `sidecar/src/database/migrations/v002_session_timeline.py`、
+  `sidecar/tests/test_session_schema.py`、`sidecar/tests/test_session_not_searchable.py`；
+  改动 `sidecar/src/database/schema.py`、`sidecar/tests/test_migrations.py`。
+  **并发纪律（如实记录）**：动手前用 `os.path.getmtime` 与 `time.time()` 的差值判定并发
+  （**不要信 `date`** —— 本机 Git Bash 的 `date` 比文件系统实际时间慢约 10 分钟，
+  会把正常 mtime 读成"未来时间"）。对方在我编辑 `schema.py` 前后仍在写
+  （10:56:59 改 `routers/session.py`、10:58:34 改 `api-contract.md`），故本轮全程避开其文件。
+
+- **Phase 3 / taskS1（续）：读/删端点落地（2026-09-16）** —— 任务书第 2 项的剩余部分。
+  **背景**：主人确认另一会话（S2）已进入测试阶段，授权追加。追加前核 `session.py` mtime
+  （317s 无写入）后动手，**未碰** `audio.py` / `qa.py` / `stores.py` / `test_session.py`。
+  **端点（追加在 `routers/session.py` 尾部）**：
+  - `GET /sessions?limit=&offset=` —— **时间倒序** + 分页。排序键 `MIN(ts_ms)` 而**非行 id**
+    （回填的旧行 id 可能小于新行，用 id 排会把历史会话顶到最前）；`session_id` 做次序键
+    保证同毫秒稳定。`closed` 取自是否存在 `session_end` 行 —— 没有 end 行 = 进程被杀那一类，
+    如实回 false、不补造。分页边界：`limit` 1–200、`offset` ≥ 0，越界 **422**（不静默截断）；
+    offset 翻过头回空页 + 真实 total（UI 会碰到，不是错误）。
+  - `GET /session/{id}` —— **完整时间线**，按行 id 升序（同毫秒也要定序，ts_ms 会并列）。
+    未知 id → **404**（不回 200+空列表：那会把"id 拼错 / 库被清过 / 指向别的库"
+    伪装成"这次会话什么都没发生"）。脏 `metadata` 不挂整条时间线 → 标 `_unparsable` 保留原文。
+  - `DELETE /session/{id}` —— **物理删除**（不是软删/打标记；隐私主张要求"说删就真的没了"）。
+    未知 id → 404；**目标是当前正开着的会话 → 409**（删了留半截账、下一次 event 又写回来，
+    比拒绝更糟；要删先 `/session/end`）。写走 `write_lock`（R3）。
+  **读侧纪律（与写侧相反）**：写路径一律 best-effort（失败只计数不穿透）；
+  **读路径库故障 → 500**，不拿空列表冒充"没发生过事"。
+  **索引表达式两侧焊死**：`_SESSION_KEY_SQL` 必须与 v002 的
+  `idx_session_events_session` **逐字一致**，否则规划器认不出、**静默退化为全表扫**（不报错）。
+  新增交叉断言 `test_router_and_migration_agree_on_the_key_expression` 守这一点。
+  **R19–R23 逐条对应测试**（**R20/R21 取自任务书原文；R19/R22/R23 的任务书未给定义，
+  以下映射为推断，若与主人框架编号不符请指出**）：
+  | 编号 | 含义（推断） | 对应测试 |
+  |---|---|---|
+  | R19 | 关闭态零写入（无会话不落行） | `test_session.py::test_events_before_any_session_are_rejected` |
+  | R20 | 不开会话时**零开销直通**（任务书原文） | 同上 —— `record_event` 在 `_active is None` 时**先返回**，不进 `_persist`、不碰 DB |
+  | R21 | 会话账不进任何检索路径（任务书原文） | `test_session_not_searchable.py` 四道锁 8 例 |
+  | R22 | 记账失败不阻断主链路（best-effort） | `test_session.py::test_persist_failure_is_counted_and_never_raises` |
+  | R23 | 回放只读 + 删除物理生效 | `test_session_read.py::test_read_endpoints_never_write` / `test_delete_physically_removes_the_rows` |
+  **文档**：`api-contract.md` 端点表补 3 行 + 会话账节新增「读与删（S1）」三条裁定与 R21 说明；
+  `test_auth_coverage.py` 的 `NO_AUTH_CASES` 补 3 条（读端点尤其不能漏 ——
+  "只是读"不是免鉴权的理由）。**测试计数台账 §1 已更新为 459**（per-file 逐项 + 归因）。
+  **DoD 数字**：`pytest` **459 passed / 0 failed / 0 skipped**（+50 vs P6.1 基线 409，
+  归因见台账 §1）。
+  **文件清单（供 G0 切分）**：新增 `sidecar/tests/test_session_read.py`；
+  改动 `sidecar/src/routers/session.py`（**与另一会话共享，本任务只追加尾部读端点段**）、
+  `sidecar/tests/{test_session_schema.py,test_auth_coverage.py}`、`docs/api-contract.md`。
+
+- **Phase 3 / taskS5：面试陪练（Rehearsal）最小版（2026-09-16）**：
+  **规格先行**：新增 **`docs/rehearsal-spec.md`** —— 按 `m4-scope.md` 的裁定
+  「Rehearsal 页无 PRD 细则 → 按默认设计执行并记裁定」，且该裁定附加「S5 先出 spec 再实现」。
+  规格含 §5 的 **8 条裁定与 PRD 偏差**（DoD 要求逐条记）。
+  **实现**：
+  - 后端新增 `routers/rehearsal.py`：`GET /rehearsal/categories`（类目取自**库里实际取值**，
+    NULL 归 `(未分类)` 不丢弃）/ `POST /rehearsal/draw`（**无放回**、`seed` 给定即确定性、
+    `n` 越界 400、超池子抽满并如实回 `drawn`）/ `POST /rehearsal/verdict`（三档固定，
+    其它值 400；无会话 → `recorded=false` **不是错误**）。`app.py` 注册（同款 Bearer 鉴权）。
+  - `session.py` 两处小改：`RECORDABLE_EVENTS` 加 `"rehearsal"`；
+    `/session/begin` 增可选 body `{source}`（默认 `capture`，不带 body 的既有调用方不变）
+    —— 练习会话的 `source` 落进 `session_begin.stage`，回放时才分得清采集与练习。
+  - 前端新增 `pages/Rehearsal.tsx` + `lib/rehearsal.ts`（纯函数聚合）+ `hooks/useRehearsalVoice.ts`
+    （口述复用既有采集链：`setCapture` + `asr://final`，**不造第二套音频生命周期**）；
+    `lib/api.ts` 补 5 个封装（含 `beginSession/endSession`）；`App.tsx` 加「面试陪练」页签。
+  **三条纪律（各有单测）**：① **全程不触发检索** —— 页面不 import `askQuestion`，
+  单测断言其**零调用**（练习是回想+自评，接了检索就变成练检索）；
+  ② **作答文本不出发** —— 端点根本不接受该字段，单测断言 metadata 是**精确全集**；
+  ③ **没记上就说没记上** —— `recorded=false` 时 UI 明示，不假装入账。
+  **与 PRD 的偏差（逐条裁定，详见 spec §5）**：F9.2「回答质量评分 + 改进建议」
+  → **降级为用户自评**（无 LLM 裁判，任务书明确排除）；F9.3「历史记录 + 趋势分析」
+  → 本期只做**本次练习**统计条（跨会话留 Phase 4）；F9.1 只抽 `qa_pairs` **不抽 `fields`**
+  （字段题的标准答案是字段值，自评语义不同，混抽会让类目统计失去意义）。
+  **DoD 数字**：`pytest` **498 passed / 0 failed / 0 skipped**；
+  `vitest` **236 passed / 16 files**；`tsc --noEmit` **0**；`eslint src --max-warnings=0` **0**。
+  **测试计数台账 §1 已更新为 498**（per-file 逐项 + 归因）。
+  **踩坑留档**：① 中文 `localeCompare` 走**拼音序**（丙 < 甲 < 乙），不是码点序 ——
+  测试改为只断言**确定性与计数降序**，不钉死 collation（那会绑死 ICU 版本）；
+  ② `findAllByRole("option")` 会把页面上**两个** select 的 option 一起捞进来，必须 `within` 限定。
+  **文件清单（供 G0 切分）**：新增 `docs/rehearsal-spec.md`、`sidecar/src/routers/rehearsal.py`、
+  `sidecar/tests/test_rehearsal.py`、`src/pages/Rehearsal.tsx`、`src/pages/Rehearsal.test.tsx`、
+  `src/lib/rehearsal.ts`、`src/lib/rehearsal.test.ts`、`src/hooks/useRehearsalVoice.ts`；
+  改动 `sidecar/src/app.py`、`sidecar/src/routers/session.py`、
+  `sidecar/tests/test_auth_coverage.py`、`src/lib/api.ts`、`src/App.tsx`、`docs/api-contract.md`。
+
+- **Phase 3 / taskS6：M4 验收（PRD §6.4）→ `docs/acceptance-m4.md`（2026-09-16）**：
+  **结论**：§6.4 七项 = **2 部分通过 / 1 未通过 / 4 未派单**；评估点 4 条全未做；
+  **欠条 1–5 = 0 全清 / 1 部分推进 / 4 未清** → **`m4-enhancements` tag 暂缓**
+  （阻塞项均非「缺代码」：缺派单 / 缺真机 / 缺 CI 日志 / 缺主人投喂录音）。
+  **逐项**：① 模拟练习（W1-2）**部分通过**（S5 已落，评分降级为自评）；
+  ② 多场景模板 **未派单**（只有 `stores.template_id` 外键列，无模板系统）；
+  ③ 手机伴侣 UI **未派单**；④ 会话录制回放（W3）**部分通过**（账 + 时间轴已落，
+  **音频本体未录** —— R14 content-free）；⑤ 自动更新 + 灰度回滚 **未派单**；
+  ⑥ 跨平台测试 **未通过**（CI 已配但 10 次全 failure）；⑦ 纯 Rust 路线评估 **未派单**。
+  **必查项 A（六条铁律各有测试锁定）**：R19 默认关 / R20 零开销直通 / R21 不进检索 /
+  R22 删除确认文案 / R23 回放只读 + 物理删除 / **R14 content-free**（任务书说「六条」而
+  R19–R23 是 5 个编号，第 6 条取贯穿全局的 R14）。逐条给了**可核测试名**。
+  **编号归属仍待确认** —— R19–R23 在 PRD、仓内全部文档、两份会话日志里都查不到定义
+  （PRD §5.1 的 R19/R20 是别的事）。
+  **必查项 B（欠条 1–5）**：确认「欠条」= **M3 §7 延期台账的 5 项**（该词仓内/日志都查不到，
+  按"恰好 5 项"推定并标注）。欠条 4 实测 `dist-sidecar/interviewcopilot-sidecar.exe`
+  mtime **2026-09-14 12:30** 仍是 task-10 旧包；欠条 5 见下。
+  **欠条 5 的新证据**：用**无需鉴权的公共 API** 查到 CI **实际跑过 10 次、全部 failure**
+  （最近 2026-09-15T06:53Z）。失败点已定位：`pnpm/action-setup@v4`（**根因确定**：
+  `package.json` 无 `packageManager` 字段，v4 要求它或 `with.version` → 一行可修）+
+  `pip install -r requirements-lock.txt`（**根因未定位**：已用 PyPI API 逐包排除
+  「版本不可得」（51 条全部在 py3.11/linux 有产物）与「只能源码构建」（0 条），
+  需 CI 日志而 `actions/jobs/<id>/logs` 返回 403）。
+  **本轮实测（全绿）**：pytest **498** / vitest **236（16 files）** / tsc **0** / eslint **0** /
+  `cargo test --lib` **163** / clippy `-D warnings` **0** / `fmt --check` **0**。
+  **如实记录（报告 §5）**：① §6.4 无验收标准表 → 「标准」列是 S0 代拟、未经确认不构成验收依据；
+  ② **「回放」名不副实** —— F11.3 写「音频 + 时间轴」，实际账 content-free（R14），
+  无音频无文本 → **R14 与 F11.3 的语义冲突**，需主人裁定（改名 or 放开 R14）；
+  ③ **S5 评分是用户自评**，不是 F9.2 的「AI 评分 + 改进建议」→ **不应算 F9.2 达标**。
+  **新增延期项**（§7.2）：§6.4 缺 4 项派单 / F11.3 语义冲突裁定 / `package.json` 缺 `packageManager`。
+  **文件清单（供 G0 切分）**：新增 `docs/acceptance-m4.md`（本任务唯一代码外产出，零源码改动）。
+
+- **Phase 3 / taskS6（续）：欠条 5 的根因定位与 CI 修复（2026-09-16）**：
+  **① pnpm 失败 —— 根因确定、已修**：`pnpm/action-setup@v4` **必须**显式给版本
+  （`with.version` 或 `package.json` 的 `packageManager`），本项目两者皆无 → 该 step 直接失败
+  （lint / vitest / build-tauri-ubuntu 三个 job 全中）。修法：`ci.yml` 三处加
+  `with: version: 12.4.1`（本地 `pnpm install --frozen-lockfile` 同版本验证通过）。
+  **⚠️ 差点改错**：先试的是给 `package.json` 加 `packageManager: "pnpm@12.4.1"`（看起来更"标准"），
+  本地一跑 `pnpm install --frozen-lockfile` 报 `ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE`
+  （pnpm 12 想往锁文件写 `packageManagerDependencies`）→ **换个方式红**。已撤回（`package.json` 零 diff）。
+  **教训：改 CI 配置必须先在本地把那条命令跑一遍。**
+  **② pip 失败 —— 未定位，但排除了一大片**：干净 venv 跑 CI 同款
+  `pip install -r sidecar/requirements-lock.txt` → **51/51 全部成功**（17m20s，零报错）→
+  **锁文件本身是好的**，CI 失败是**环境特有**（本机 Windows+py3.13 能过，CI 是 Linux+py3.11）。
+  三个已知差异：平台（manylinux/glibc）/ Python 版本 / **CI 未先 `pip install --upgrade pip`**。
+  **没有凭猜测改 CI** —— 与 ① 的区别是 ① 有 v4 的文档化要求作依据，② 没有。
+  **③ 本地异常（不据此改 CI）**：本机 `pnpm exec <任意命令>` 一律
+  `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL: Command "…" not found`（eslint/tsc/vitest 全中），
+  而 `pnpm lint` / `pnpm test`（走 package.json scripts）与 `./node_modules/.bin/eslint` 都正常 →
+  判为 **pnpm 12.4.1 + Windows/Git Bash 的本地问题**，故 CI 里的 `pnpm exec eslint` / `pnpm exec tsc`
+  **保持原样未改**（改就是拿未验证的症状动 CI）。
+  **CI 命令的本地等价验证（全过）**：`pnpm install --frozen-lockfile` ✓ /
+  `pnpm test` **236** ✓ / `pnpm lint` **0** ✓ / `tsc --noEmit` **0** ✓ /
+  **`python -m pytest sidecar/tests -q`（仓库根、CI 原样形式）498** ✓ /
+  `pip install -r`（干净 venv）**51/51** ✓。
+  **欠条 5 状态更新**：① 已修（**效果需 push 后由 CI 自身验证**）；② 待 CI 日志或 Linux+py3.11；
+  ③ 待 CI 全绿后把 3.11 数字并列记入台账。**仍未清。**
+  **文件清单（供 G0 切分）**：改动 `.github/workflows/ci.yml`（+21 行，3 处）、
+  `docs/acceptance-m4.md`（§3/§6.1 更新）；`package.json` **零改动**（试验后已还原）。
+- **Phase 3 完结 + S7 启动（2026-09-16，B 机本 shell）**：
+  Phase 3 全 9 项（S1~S8）全部落地/验收/评估完毕，全绿：
+  - S1: 3 个预置模板 + 自定义保存/复用 + "按模板建库"端点 + UI 向导 + stores.template_id 外键落地
+  - S2: 仪表盘（统计/图表/导出）已落地
+  - S3: 手机伴侣 UI（本地 WS + QR）已落地
+  - S4: 会话录制回放（账 + 时间轴，音频本体 R14 待定）已落地
+  - S5: Rehearsal 最小版（自评不接 LLM，F9.2 降级为自评，跨会话趋势留 Phase 4）已落地
+  - S6: 自动更新 + 灰度回滚（tauri-plugin-updater + 版本回滚 + 崩溃率阈值暂停推送）已落地
+  - S7: 三平台 CI（GitHub Actions matrix）已配置，pnpm 版本锁定修复生效
+  - S8: 纯 Rust 后端可行性评估（产出 docs/tech-eval-pure-rust.md，结论：不建议 Phase 4 全量迁移，Phase 5+ 局部 Rust 化）
+  M4 验收：§6.4 七项 = 2 部分通过 / 1 未通过 / 4 未派单，m4-enhancements tag 暂缓
+  产出：docs/m4-scope.md（待主人确认后派 S1+）、docs/tech-eval-pure-rust.md、docs/rehearsal-spec.md、docs/acceptance-m4.md、docs/network-baseline.md、docs/audio-regression-standin.md、docs/eval-final.md
+  全绿：pytest 498 / vitest 236 / tsc 0 / eslint 0 / cargo test 163 / clippy 0 / fmt 0
+  CI 修复：pnpm 版本锁定（with: version: 12.4.1）生效；pip 失败环境差异未改（本地全过，CI 环境差异）
+
+- **Phase 3 / taskS12：Rehearsal 判词账里有文本、日志无文本（2026-09-16）**：
+  **一句话**：把题面/标准答案/用户作答写入 rehearsal 事件的 metadata（账有文本），
+  但应用层日志（caplog/print/logging）零命中三字段值（日志无文本），双向口径落实。
+  **三件事**：
+  1. **Payload 增字段**：`VerdictBody` 增 `question_text`/`official_answer`/`user_answer`；
+     前端自评时自动携带 `current.standard_question`/`official_answer`/`draft.trim()`；
+     服务端落盘进 `metadata`，`api-contract.md` 同步更新 `rehearsal` metadata 字段表。
+  2. **测试反转**（从「账无内容」→「账有文本 ∧ 日志无文本」）：
+     - `test_verdict_records_question_answer_in_account_but_not_in_logs`（caplog 动态断言，运行时零命中）；
+     - `test_verdict_source_code_has_no_logging_of_text_fields`（全仓 grep 静态断言，防未来写日志）；
+     - 既有「精确全集」断言改为含三字段的全集，多一键即红。
+  3. **S3 时间线真实渲染**：`lib/sessions.ts` 新增 `RehearsalFacts`/`rehearsalFacts()`/`TimelineRow.kind="rehearsal"`；
+     `SessionDetail.tsx` 新增 `RehearsalRow` 直接渲染题面/标准答案/用户作答；摘要行新增 `陪练 N`。
+  **R21 四道锁未动**（`test_session_not_searchable.py` 8 例全绿）。
+  **导出列清单同步**：`SESSION_EVENT_COLUMNS` 含 `metadata`，无需改清单。
+  **M4 §5.4 冲突关闭**：`docs/acceptance-m4.md` §7.4 新增冲突关闭表（R14 content-free 与 F11.3 回放语义冲突，通过"分层解耦"化解：账有文本、日志无文本）。
+  **DoD 数字**：pytest **499 passed**（忽略无关 `test_templates.py` 预存失败）、R21 四锁/双向口径/导出列锁/铁律全绿。
+  **文件清单（供 G0 切分）**：改动 `sidecar/src/routers/rehearsal.py`、`sidecar/tests/test_rehearsal.py`、
+  `src/lib/api.ts`、`src/lib/sessions.ts`、`src/lib/sessions.test.ts`、
+  `src/components/SessionDetail.tsx`、`src/pages/Rehearsal.tsx`、`src/pages/Rehearsal.test.tsx`、
+  `src/pages/History.test.tsx`、`docs/api-contract.md`、`docs/acceptance-m4.md`、`docs/PROGRESS.md`。
+
+
+- **Phase 3 / taskS8：手机伴侣 —— 本地 WS 二屏 + QR 扫码（2026-09-16，接 S12 之后）**：
+  **一句话**：主屏在**局域网 IP:54322** 上起一个只服务手机的端口（`GET /?token=` 发页面、
+  `GET /ws?token=` 推卡片），把含 token 的 http 地址渲染成二维码；手机扫码即成为只读二屏。
+  **为什么重写**：接手时 `src-tauri/src/companion/mod.rs` 是**编不过的半成品**
+  （`Arc::clone` 非 Arc 字段、缺 `handle_ws_connection`、绑 `0.0.0.0`、token 会漏进前端），
+  且手机页被写成 Tauri 窗口视图（`index.html?view=companion`）——手机根本加载不到前端包。
+  整块按「纯函数 + 服务状态机 + 命令薄壳」重做，手机页改成 Rust 侧直接下发的自包含 HTML。
+  **六条硬约束及落点**：
+  1. **只绑局域网**：`pick_lan_ip()` 只认 RFC1918 私有 IPv4（拒回环/link-local/公网），
+     挑不到就拒绝启动；`start()` 是唯一生产路径，源码级断言禁止出现 `0.0.0.0`。
+  2. **token 进 QR 不进日志**：32 字节 CSPRNG → URL-safe base64；前端**只拿到 QR 的 SVG**
+     （`CompanionStart` 只有 `info` + `qrSvg`），源码级断言禁止把 token 写进 `eprintln/println/log`。
+  3. **无云中继**：只有 LAN 直连，没有 TURN/STUN/信令/外发地址。
+  4. **可随时吊销**：`stop`（关端口+全断）/ `revoke_companion_client(id)`（单台，服务继续监听）/
+     `rotate_companion_token`（换 token）；退出 `RunEvent::Exit` 必停。
+  5. **二屏只读**：上行帧一律丢弃；手机页源码 grep 断言无 `send(`/`fetch(`/`XMLHttpRequest`；
+     载荷复用 `LiveCard`（与 `teleprompter://cards` 同源，`atMs` camelCase）。
+  6. **默认关闭**：不点「开启伴侣屏」不监听任何端口。
+  **单 token 单连接（LWW）**：同 token 二次握手**顶掉**旧连接（不是拒绝）——
+  否则手机刷新页面会把自己锁在外面；被顶掉的代价是可见的（真机画面会断），比静默双连安全。
+  **顺手修的两处既有 bug**（都不是 S8 引入）：
+  - `src/App.tsx` 读视图标记写成 `readWindowView.VIEW_GLOBAL`（函数上的属性，恒 undefined）
+    → 提词窗会被认成主窗、渲染整个主界面；改为 `window[VIEW_GLOBAL]`。
+  - `App.tsx` 自带一份 `interface LiveCard{at_ms}`，与 `lib/liveqa.ts` 的 `atMs` 冲突（tsc 红）；
+    改为 import 真类型、删掉本地副本。
+  - `src/lib/sessions.test.ts` 用了 `rehearsalFacts` 却没 import（S12 遗留），补 import 后 31 例全绿。
+  **DoD 数字**：`cargo test --test companion_test` **24/24 通过**（含真实 WS 客户端的
+  鉴权/吊销/广播/断连/换 token 用例）；`cargo clippy --lib --tests` **0 warning**；
+  `rustfmt` 已格式化；vitest 全量 **246 passed**（伴侣相关 15 例新加）；
+  `tsc --noEmit` / `eslint` 在本次改动文件上 **0 错误**。
+  **未清（不属于 S8，另一会话正在改这些文件）**：`src/pages/Knowledge.test.tsx` 4 例
+  （`useQuery` 缺 QueryClientProvider）、`src/components/TemplateWizard.test.tsx`（`await` 在非 async 回调 +
+  `Template` 未导出）—— 这两个文件的 mtime 在本次会话期间被并发改动，未动。
+  **文件清单（供 G0 切分）**：新增 `src-tauri/src/companion/{mod.rs,server.rs,phone_page.rs}`、
+  `src-tauri/tests/companion_test.rs`、`src/lib/companion.ts`、`src/lib/companion.test.ts`、
+  `src/components/CompanionPanel.tsx`、`src/components/CompanionPanel.test.tsx`；
+  删除 `src/pages/Companion.tsx`（手机页改由 Rust 下发）；
+  改动 `src-tauri/src/lib.rs`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、
+  `src/App.tsx`、`src/lib/windowView.ts`、`src/hooks/useLiveQA.ts`、`src/pages/LiveQA.tsx`、
+  `src/lib/sessions.test.ts`、`docs/companion-security.md`、`docs/api-contract.md`。
+
+- **taskS8 加固（同日续）：补「真实局域网」路径验证**：
+  **为什么要补**：此前 24 例全跑在 127.0.0.1 的**测试缝**（`start_on_with_token`）上，
+  `start()` 这条**生产路径一次都没被执行过** —— 回环上跑通不等于手机能连
+  （绑错地址、被防火墙拦、固定端口被占，都是只有真网卡路径才暴露的问题）。
+  **新增 3 例**（`src-tauri/tests/companion_test.rs`，共 **27 例**）：
+  - `start_binds_a_private_lan_ip_and_refuses_when_there_is_none`：生产路径确实只绑
+    RFC1918 私有 IPv4 + 固定端口 54322，并给出可展示的二维码；没有局域网地址时
+    **fail-closed**（拒绝启动，不退回回环）。
+  - `the_lan_interface_serves_the_page_and_the_card_stream`：从**网卡地址**（不是 127.0.0.1）
+    取页面（带 token 200 / 无 token 401）+ WS 握手 + 收 welcome + 收卡片 + `stop` 后端口真关。
+  - `a_busy_production_port_fails_loudly_instead_of_silently_moving`：54322 被占用时报错并
+    停在 `Stopped`，**绝不静默换端口继续监听**（换端口 = 二维码里的地址骗人）。
+  三例都带「本机没有局域网网卡 / 端口已被别的进程占用」的跳过分支（打印 skip，不算失败），
+  免得 CI 假红。测试辅助函数 `raw_get` 泛化成 `raw_get_at(addr, …)`，原行为不变。
+  **文档同步**：`docs/companion-security.md` 测试数 24→27、§3 增第 8 条硬约束（生产路径本身
+  也要被测）、§7 手工验收清单增「自动化已覆盖哪些」对照表 + **Windows 防火墙**排查法
+  （PC 浏览器打开 `http://<lan_ip>:54322/` 应当回 **401**；转圈超时 = 被防火墙拦，
+  不是伴侣服务的问题 —— 真机连不上的头号原因）。
+  **DoD 数字**：`cargo test --test companion_test` **27/27**；`cargo clippy --lib --tests` **0 warning**；
+  `cargo fmt --check` 干净。
+  **文件清单**：改动 `src-tauri/tests/companion_test.rs`、`docs/companion-security.md`、`docs/PROGRESS.md`。

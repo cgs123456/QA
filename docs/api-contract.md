@@ -43,6 +43,38 @@ Tauri 校验 `protocol_version`，不匹配 → `sidecar://degraded`（version_m
 | PUT | `/asr/latency` | 是 | `{enabled}` 开/关低延迟模式，只影响**下一段**；开启要求 CUDA 就绪，否则 409 `{"error":"unavailable"}`；关闭永远允许 |
 | GET | `/diagnostics/audio` | 是 | 最近一次音频 WS 连接的内容无关计数 + 限额（task19 诊断面板）→ `{last_connection|null,limits,capture:{status:pending}}`；从未建连是合法 null，不是 404 |
 | GET | `/diagnostics/degrade` | 是 | 三链降级计数（P8，R14 内容无关）→ `{chains:{asr\|llm\|embedding:{total,by_kind,by_provider}}}`；sidecar 重启清零 |
+| POST | `/session/begin` | 是 | 开一次会话（S2）：**幂等** —— 已在会话中不新建、不重复写 `session_begin`，回同一个 id。→ `{session_id,already,counters}` |
+| POST | `/session/end` | 是 | 关当前会话：`{session_id?,closed,counters}`；没有会话 → `closed=false`（幂等，不报错）；`session_id` 不匹配则**不关别人的会话**（`end_mismatch`） |
+| GET | `/session/status` | 是 | 当前会话 + 计数 + 每类账行的计数与**字段名**：`{session_id,source,counters,event_counts,event_fields}`；R14 内容无关（`event_fields` 只回 key，不回 value） |
+| POST | `/session/event` | 是 | 记一次链路事实：`{event_type,stage?,metadata?}` → `{recorded,session_id}`；无会话或类型不在白名单 → `recorded=false` + `late_events_rejected` |
+| GET | `/sessions/settings` | 是 | 录制设置 → `{enabled,retention_days,updated_ms}`；`retention_days=null` = 永久。**文件不存在时回保守默认**（`enabled=false`），不报错 |
+| PUT | `/sessions/settings` | 是 | 改录制设置（只改传了的字段）；`retention_days ∉ {null,7,30}` → 400 |
+| GET | `/sessions/usage` | 是 | 会话数据量 → `{sessions,events,payload_bytes,oldest_ms,newest_ms,active_session_id}` |
+| POST | `/sessions/purge` | 是 | 清除**全部**会话账行（物理删除）；`confirm≠true` → 400；有活动会话 → 409 |
+| GET | `/session/{id}/export` | 是 | 单会话导出 → `{filename,content}`。**只有 JSON**：MD 渲染器不存在，按裁定不新建 |
+| GET | `/sessions` | 是 | 会话列表（S1）：**时间倒序** + 分页 `?limit=&offset=`（limit 1–200，越界 422；offset 越界回空页不报错）→ `{sessions[],total,limit,offset}`；每项 `{session_id,started_ms,last_ms,events,store_id,closed}`。排序键是 `MIN(ts_ms)` 不是行 id（回填的旧行 id 可能更小） |
+| GET | `/session/{id}` | 是 | 一次会话的**完整时间线**（S1）：按行 id 升序（同毫秒也定序）→ `{session_id,events[],count}`；每条含 `{id,event_type,stage,ts_ms,store_id,metadata}`；未知 id → **404**（不回空列表）。**只读**：不写任何行 |
+| DELETE | `/session/{id}` | 是 | **物理删除**该会话全部账行（S1）→ `{session_id,deleted}`；未知 id → 404；目标是**当前正开着的会话** → 409 `{"error":"session_active"}`（先 `/session/end`） |
+| GET | `/rehearsal/categories` | 是 | 当前库的类目分布（S5，供陪练下拉）→ `{store_id,categories:[{category,count}],total}`；类目取自**库里实际取值**，NULL 归入 `(未分类)`；无当前库 → 400 |
+| POST | `/rehearsal/draw` | 是 | 抽题（S5）：`{store_id?,category?,n=10,seed?}` → `{store_id,questions[],drawn,pool,seed}`；**无放回**；`n` 越界（1–50）→ 400；`n` 超过池子 → 抽满并如实回 `drawn`；**`seed` 给定即确定性**（同 seed 同顺序） |
+| POST | `/rehearsal/verdict` | 是 | 记一次自评（S5）：`{qa_id,category?,verdict,store_id?,question_text?,official_answer?,user_answer?}`，`verdict ∈ {correct,partial,unknown}` → 其它值 400 → `{recorded,session_id}`；无会话/录制关闭 → `recorded=false`（**不是错误**）；账行含文本（question_text/official_answer/user_answer），应用层日志无文本（R14） |
+
+## Tauri 命令（不走 sidecar HTTP）
+
+> 手机伴侣（S8）**不是 sidecar 端点**：监听方是 Tauri 主进程里的 Rust
+> `companion` 模块，直连局域网里的手机浏览器。安全边界见
+> `docs/companion-security.md`。
+
+| 命令 | 入参 | 返回 | 说明 |
+|---|---|---|---|
+| `start_companion` | — | `CompanionStart` | 只绑 **RFC1918 局域网 IPv4** `:54322` 并生成 token；返回 `{info, qrSvg}`，`qrSvg` 编码的是 `http://<lan_ip>:54322/?token=<token>`。**挑不到局域网地址就报错**（fail-closed） |
+| `stop_companion` | — | `CompanionInfo` | 关监听 + 断开全部手机（先发 `revoked` 再 `Close(4001)`）+ 清 token |
+| `get_companion_status` | — | `CompanionInfo` | `{state: stopped\|listening\|connected, lanIp, port, clients[{id,sinceMs}]}`；**不含 token** |
+| `revoke_companion_client` | `clientId` | `bool` | 吊销单台设备；服务继续监听（吊销 ≠ 停止） |
+| `rotate_companion_token` | — | `CompanionStart` | 换 token 出新二维码，旧连接全部失效 |
+| `broadcast_to_companion` | `cards` | `null` | 推卡片给已连手机；载荷与 `teleprompter://cards` 完全一致（`LiveCard`，字段 `atMs`）；无连接时是 no-op |
+
+类型与帧格式（含 `protocolVersion`、关闭码 4001）见 `docs/companion-security.md` §4。
 
 ## SSE（GET /qa/stream，禁缓冲头）
 
@@ -55,6 +87,71 @@ Tauri 校验 `protocol_version`，不匹配 → `sidecar://degraded`（version_m
 3. `{"type":"done","result":{"type","text","sources","llm_calls","provider","degraded",...}}`（P8：`provider` 为实际出力的 LLM（direct/fail_closed/error 为 null），`degraded` 为 `["备选:kind",...]` 逐级失败摘要，复用 asr_final degraded 模式；Fail-Closed 不进链，恒为 null/[]）
 
 task 在读毕或 TTL 60s 后清理；客户端断开取消后台任务。
+
+## 会话账（S2：`session_events`）
+
+**会话 = 一次采集启停**。Rust 侧 `CaptureService::start()` 发 `POST /session/begin`、
+`stop()` 发 `POST /session/end`（token 走既有 Bearer 通道，**不开新通道**；
+音频 WS 契约一字未改）。会话存在期间链路上的事实以 **content-free** 形式落
+`session_events`（R14：应用层日志无文本），但 **rehearsal 类事件的 metadata 含文本**
+（question_text/official_answer/user_answer），以便导出/回放还原语境。落行者一律是
+sidecar（调用点是 `routers/audio.py` 与 `routers/qa.py`、`routers/rehearsal.py`），
+落行入口只有一个：`routers/session.py::record_event()`。
+
+| event_type | stage | metadata |
+|---|---|---|
+| `session_begin` | 采集源（`capture`） | `session_id` |
+| `session_end` | — | `session_id`、`duration_ms` |
+| `asr_final` | 路（`loopback`/`mic`） | `session_id`、`segment_id`、`duration_ms`、`provider`、`degraded_levels`、`dropped_oldest` |
+| `asr_error` | 路 | `session_id`、`segment_id`、`error`、`degraded_levels` |
+| `qa_exchange` | `qa` | `session_id`、`action`、`provider`、`llm_calls`、`sources`、`warnings`、`top1_score`、`store_id`、`elapsed_ms` |
+| `rehearsal` | `rehearsal` | `session_id`、`store_id`、`verdict`、`category`、`qa_id`、`question_text`、`official_answer`、`user_answer` |
+
+**列与 metadata 双写（S1 ↔ S2 交接）**：v002（`v002_session_timeline.py`）把
+会话归属与写入时刻提成了列 `session_id` / `store_id` / `ts_ms`，时间线索引为
+`COALESCE(session_id, json_extract(metadata,'$.session_id'))`。写入方（`log_event`
+→ `record_event`）**同时**填列与 metadata：列给索引（不走 JSON 提取），
+metadata 让一行自解释。故新行走"列命中"、旧行（仅 metadata）走回退，**同一个索引**。
+`ts_ms` 是**写入时刻**的 epoch 毫秒，段内相对时间在 `metadata` 里，两者别混。
+
+**录制开关（S4 / F11.3 用户面）**：`POST /session/begin` 受 `enabled` 门禁 ——
+关着时返回 `{"session_id": null, "already": false, "recording": false, counters}`，
+**不建会话、不落任何行、不计 `late_events_rejected`**（那两条讲的是"有会话时的迟到"，
+这里连会话都没有）。Rust 侧据此记为 `SessionStats.disabled_skips`，**不**算降级。
+保留策略的到期清理跑在 sidecar 启动时（`main.init_storage`），幂等，跳过活动会话。
+
+三条裁定（任务书未定处）：
+
+1. **不可达 → 放弃 + 计数，不缓冲重放。** Rust 侧只加 `begin_misses` /
+   `end_misses`（`SessionStats`），本地不排队不补发；**失败不回滚采集** ——
+   采到音频却因为"记账没成功"而拒绝开流，是把观测面当成了依赖。
+   代价如实记录：那一段音频不属于任何会话。
+2. **幂等放在对端。** 重复 begin 不新建会话、不重复写 `session_begin`，
+   只计 `begin_duplicate` 并回同一个 id。客户端崩了就没机会去重，
+   而对端是唯一知道"当前会话是谁"的一方。
+3. **end 之后的迟到事件一律拒收**（计 `late_events_rejected`，不落库）。
+
+### 读与删（S1）
+
+写路径一律 **best-effort**（失败只计数、不穿透主链路）；读路径**相反** ——
+调用方明确来要数据，拿不到就该报错（库故障 → 500），而不是回空列表让人
+以为"这段时间没发生过事"。三条读侧裁定：
+
+1. **回放只读。** 两个 GET 不写任何行 —— 包括"顺手补一行统计 / 标记已读"。
+   回放必须可重复：跑两次结果相同（`test_read_endpoints_never_write` 钉住）。
+2. **找不到就 404。** 会话 id 由对端发下来，查不到就是查不到（拼错 / 库被清过 /
+   指向了别的库）。回 200 + 空列表会把这三种情况全部伪装成"这次会话什么都没发生"。
+3. **删除是物理的**，不是软删、不是打标记 —— 隐私主张要求"用户说删就真的没了"，
+   软删会在库文件里留下可恢复的残影。**正在开的会话拒绝删（409）**：
+   删了会留下半截账，且下一次 event 立刻把它写回来，比拒绝更糟。
+
+**R21（会话账不进检索路径）**：`session_events` 不建任何 FTS/vec 虚拟表，
+`src/retrieval/**` 与 `/knowledge/search` 的源码里 `session_events` 零命中。
+四道锁见 `sidecar/tests/test_session_not_searchable.py`（含"灌 500 行账后
+检索结果逐字不变"的行为断言）。
+   否则"一次会话有多少段"这个断言就失去意义 —— 下一会话的段会混进上一会话。
+   Rust 侧同一规则由**世代号**守：停止之后到达的 begin 回执不许把状态改回"已开"
+   （`stale_results_rejected`）。
 
 ## 模型下载进度通道（落地裁定）
 

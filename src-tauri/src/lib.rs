@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod autostart;
 pub mod commands;
+pub mod companion;
 pub mod security;
 pub mod shortcuts;
 pub mod sidecar;
@@ -20,6 +21,10 @@ use crate::audio::service::CaptureService;
 use crate::commands::audio::{get_capture_state, set_capture, toggle_capture};
 use crate::commands::settings::{get_autostart, save_api_key, set_autostart};
 use crate::commands::window::{destroy_overlay, get_overlay_status, set_overlay, toggle_overlay};
+use crate::companion::{
+    broadcast_to_companion, get_companion_status, revoke_companion_client, rotate_companion_token,
+    start_companion, stop_companion, CompanionService,
+};
 use crate::stealth::overlay;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -37,6 +42,8 @@ pub fn run() {
         .manage(SidecarState::default())
         // M2-7：采集服务单例。快捷键与前端开关都通过它启停，状态由它持有。
         .manage(std::sync::Arc::new(CaptureService::new()))
+        // S8：伴侣服务单例（本地 WS 二屏）。
+        .manage(std::sync::Arc::new(CompanionService::new()))
         // taskP7：托盘是否真的建起来了。主窗「关闭」要不要收进托盘取决于它。
         .manage(tray::TrayState::default())
         .setup(|app| {
@@ -98,7 +105,13 @@ pub fn run() {
             toggle_overlay,
             destroy_overlay,
             get_autostart,
-            set_autostart
+            set_autostart,
+            start_companion,
+            stop_companion,
+            get_companion_status,
+            revoke_companion_client,
+            rotate_companion_token,
+            broadcast_to_companion
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -109,6 +122,10 @@ pub fn run() {
                 // M2-7: 进程退出前先停采集，别让 uplink 线程拖着 socket 一起走。
                 if let Some(svc) = app_handle.try_state::<std::sync::Arc<CaptureService>>() {
                     svc.inner().request_stop();
+                }
+                // S8: 退出前停止伴侣服务，切断所有连接。
+                if let Some(svc) = app_handle.try_state::<std::sync::Arc<CompanionService>>() {
+                    tauri::async_runtime::block_on(async { svc.stop().await });
                 }
             }
         });

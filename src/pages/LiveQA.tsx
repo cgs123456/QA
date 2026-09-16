@@ -1,7 +1,8 @@
+import { CompanionPanel } from "../components/CompanionPanel";
 import { Teleprompter } from "../components/Teleprompter";
 import { useLiveQA } from "../hooks/useLiveQA";
 import { capturePaths, type CapturePath } from "../lib/liveqa";
-import { captureSummary, pathLabel, pathStatusLabel, selfCheckSummary } from "../lib/capture";
+import { captureSummary, pathLabel, pathStatusLabel, selfCheckSummary, sessionBadge } from "../lib/capture";
 import type { QuestionReason } from "../lib/trigger";
 
 const PATH_LABELS: Record<CapturePath, string> = {
@@ -80,6 +81,12 @@ export function LiveQA() {
 
       {/* 采集真值：跑没跑、跑得对不对，都以 Rust 回推的快照为准 */}
       <p data-testid="live-capture-state">{captureSummary(capture)}</p>
+      {/*
+        S2：录制中标识**常驻**（一直渲染，不是弹一次就消失）。
+        "采集在跑但会话没开成"必须一眼看得出来 —— 那种状态下音频不在任何
+        会话账里，回放时归不了位。
+      */}
+      <p data-testid="live-session-badge">{sessionBadge(capture.session)}</p>
       {capture.paths.length > 0 && (
         <ul data-testid="live-capture-paths">
           {capture.paths.map((p) => (
@@ -99,6 +106,9 @@ export function LiveQA() {
 
       <h3>提词框</h3>
       <Teleprompter cards={cards} />
+
+      {/* S8：手机伴侣（局域网二维码）。默认关闭，点了才监听端口。 */}
+      <CompanionPanel />
     </div>
   );
 }

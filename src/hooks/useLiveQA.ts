@@ -27,6 +27,7 @@ import {
 } from "../lib/capture";
 import { askQuestion } from "../lib/qa";
 import type { QuestionReason } from "../lib/trigger";
+import { broadcastToCompanion } from "../lib/companion";
 
 /** Rust `audio/uplink.rs` 的下行事件名。 */
 export const EVT_ASR_FINAL = "asr://final";
@@ -232,6 +233,11 @@ export function useLiveQA(options: UseLiveQAOptions = {}) {
     broadcastRef.current = state.cards;
     // 事件总线不存在（vitest / 浏览器直开）时静默降级：这是可选能力，不是主路径。
     void emit(EVT_TELEPROMPTER_CARDS, state.cards).catch(() => {});
+    // S8：**同一份**载荷再走一路给手机伴侣屏（局域网 WS）。
+    // 刻意放在同一个 effect 里：两路必须同批，且都靠同一个 `broadcastRef` 去抖——
+    // 拆成两个 effect 的话，后一个会看到已经被更新的 ref 而永远不推（踩过）。
+    // 没有手机连接时 Rust 侧是廉价的 no-op；失败同样静默降级。
+    void broadcastToCompanion(state.cards).catch(() => {});
   }, [broadcast, state.cards]);
 
   const triggerManual = useCallback(() => dispatch(session.manual(Date.now())), [dispatch, session]);
