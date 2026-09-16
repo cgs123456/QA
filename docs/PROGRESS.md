@@ -1929,7 +1929,11 @@ highlight 8 = **167**。
   验证过（含音频/键盘的 cfg 分支），验证过之前不进 CI —— 不能把「没测」直接变成「假红」。
   **顺带补一条漂移钉**：`the_phone_page_agrees_on_the_protocol_version_and_the_ws_path` ——
   手机页里的 `PROTOCOL_VERSION` 与 `/ws` 是**手抄**进 HTML 字符串的，抄错不编译失败，
-  只在真机上表现为「版本不一致」。**28/28**。
-  **DoD 数字**：`cargo test --test companion_test` **28/28**；clippy 0 warning；`cargo fmt --check` 干净。
+  只在真机上表现为「版本不一致」。同一个用例顺手钉住页面认 `4001`（`REVOKED_CLOSE_CODE`）：
+  它是「被吊销不重连」与「抖动退避重试」的分界，抄错 = 手机被踢后疯狂重连或永远不再重连。
+  **28/28**。
+  **DoD 数字**：`cargo test --test companion_test` **28/28**；clippy 0 warning；`cargo fmt --check` 干净；
+  前端 `vitest` 伴侣相关三文件（`companion.test.ts` 3 / `CompanionPanel.test.tsx` 8 / `liveqa.test.ts` 30）
+  **41 passed**。
   **文件清单**：改动 `.github/workflows/ci.yml`、`src-tauri/tests/companion_test.rs`、
   `docs/companion-security.md`、`docs/PROGRESS.md`。

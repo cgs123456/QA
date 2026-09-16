@@ -20,7 +20,7 @@ use futures_util::{SinkExt, StreamExt};
 use interview_copilot_lib::companion::{
     build_page_url, build_ws_url, cards_frame, generate_token, is_lan_ipv4, parse_token,
     pick_lan_ip, render_qr_svg, token_ok, welcome_frame, CompanionService, CompanionState,
-    LiveCard, COMPANION_PORT, PROTOCOL_VERSION, WS_PATH,
+    LiveCard, COMPANION_PORT, PROTOCOL_VERSION, REVOKED_CLOSE_CODE, WS_PATH,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -725,6 +725,12 @@ fn the_phone_page_agrees_on_the_protocol_version_and_the_ws_path() {
     assert!(
         page.contains(WS_PATH),
         "手机页连的不是 {WS_PATH} —— Rust 侧只认这个路径"
+    );
+    // 关闭码同样是手抄的：页面靠它区分「被吊销（不重连）」和「网络抖动（退避重试）」。
+    // 抄错的表现是手机被踢下线后疯狂重连，或者反过来永远不再重连。
+    assert!(
+        page.contains(&REVOKED_CLOSE_CODE.to_string()),
+        "手机页没认 {REVOKED_CLOSE_CODE} 这个关闭码（服务端吊销时发的是它）"
     );
 }
 
