@@ -17,14 +17,38 @@
 同一字段精确与包含都命中时取 1.0。
 
 同库同名可属不同 entity，命中全部返回（上限 limit）。
+
+# 包含匹配的两条防线（P6 标定新增，机制②）
+
+初版包含匹配是**无方向**的子串判定（`instr(field_name, kw)` 与 `instr(alias, kw)`），
+在真实规模语料上被通用词击穿，实测两例：
+
+- `帮我翻译一下这句话` 的关键词含单字 `话`，而 `话` ⊂ `客服电话` → 字段命中 →
+  联动把 `客服电话` 所在 entity 的 QA 全拉高，一句与客服无关的话拿到 0.651。
+- `保修期多久` 的关键词含 `多久`，而 `多久` ⊂ 别名 `多久发货` → 命中 `发货周期`
+  → 跨 entity 污染，`发货周期` 的 QA（eval-001）被拉到 0.797 进 **direct 档**。
+
+两条防线的依据是**方向**：包含匹配的原意（task-6）是「用户说得比**规范字段名**短」
+（`有400电话吗` 的 `电话` ⊂ `客服电话`）。而**别名**是「用户会说的整句」
+（`多久发货`），拿短词去子串命中长别名，方向反了 —— 别名只应支持**精确相等**
+（`_exact` 已覆盖），不参与子串。故：
+
+- `CONTAINMENT_MIN_LEN = 2`：单字关键词不作包含匹配（单字撞词表必然大面积误命中）。
+- `CONTAINMENT_IN_ALIAS = False`：`kw ⊂ alias` 不再算包含命中（`kw ⊂ field_name` 保留）。
+
+两个常量都是**标定项**（P6/R15），取值与前后对比见 `docs/eval-final.md`。
 """
 
 import unicodedata
 
 from retrieval.query_prep import prepare
 
-# 包含匹配的 s（初值，待标定；精确=1.0）。记录在案，本轮不改任何阈值。
+# 包含匹配的 s（初值，待标定；精确=1.0）。
 CONTAINMENT_S = 0.8
+# 关键词进入包含匹配的最小长度（见模块注释「两条防线」）。
+CONTAINMENT_MIN_LEN = 2
+# `kw ⊂ alias` 是否算包含命中（见模块注释「两条防线」）。
+CONTAINMENT_IN_ALIAS = False
 
 
 def normalize_query(query: str) -> str:
@@ -63,18 +87,21 @@ def _exact(conn, store_id: str, limit: int, raw: str) -> dict:
 
 
 def _containment(conn, store_id: str, limit: int, keywords) -> dict:
-    """关键词 ∈ field_name / alias，s=CONTAINMENT_S。"""
+    """关键词 ∈ field_name（可选 ∈ alias），s=CONTAINMENT_S。"""
     hits: dict = {}
-    kws = [k for k in (keywords or ()) if k]
+    kws = [k for k in (keywords or ()) if k and len(k) >= CONTAINMENT_MIN_LEN]
     if not kws:
         return hits
+    where = "instr(f.field_name, ?) > 0"
+    if CONTAINMENT_IN_ALIAS:
+        where += " OR instr(a.alias, ?) > 0"
     for kw in kws:
         rows = conn.execute(
             "SELECT DISTINCT f.id, f.entity, f.field_name, f.field_value FROM fields f"
             " LEFT JOIN field_aliases a ON a.field_id=f.id"
-            " WHERE f.store_id=? AND (instr(f.field_name, ?) > 0 OR instr(a.alias, ?) > 0)"
+            f" WHERE f.store_id=? AND ({where})"
             " LIMIT ?",
-            (store_id, kw, kw, limit),
+            (store_id, kw, kw, limit) if CONTAINMENT_IN_ALIAS else (store_id, kw, limit),
         ).fetchall()
         for fid, entity, name, value in rows:
             if fid not in hits:

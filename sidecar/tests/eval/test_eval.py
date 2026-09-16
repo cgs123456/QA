@@ -52,6 +52,27 @@ def test_loader_schema_and_errors(tmp_path):
         load_eval_items(bad)
 
 
+def test_frozen_set_has_no_duplicate_questions(tmp_path):
+    """重复题 = 同一道题在指标里被计权两次。
+
+    Top-3 / 拒答率都按"题数"口径统计，把某道题抄两遍就能放大或稀释某一类错误，
+    评测集一旦冻结就不该再受这种操作影响。loader 已硬拒，这里再钉住
+    当前冻结集本身是干净的，并覆盖"仅空白字符差异"也算重复。
+    """
+    items = load_eval_items(EVAL_DIR / "questions_100.jsonl")
+    qs = [it.question for it in items]
+    assert len(qs) == len(set(qs)), "冻结评测集出现重复题"
+
+    dup = tmp_path / "dup.jsonl"
+    dup.write_text(
+        '{"question": "保修期多久", "expected_qa_id": "eval-001"}\n'
+        '{"question": " 保修期多久 ", "expected_qa_id": "eval-001"}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="重复"):
+        load_eval_items(dup)
+
+
 def test_every_expected_id_resolves_to_the_corpus():
     """题目引用的 expected_qa_id 必须真在语料里。
 

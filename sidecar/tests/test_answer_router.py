@@ -98,7 +98,7 @@ async def test_empty_question_fail_closed(demo_db):
 
 
 @pytest.mark.anyio
-async def test_maybe_single_streams_with_top1_context(monkeypatch, db):
+async def test_maybe_single_streams_with_top1_context(monkeypatch, db, maybe_s):
     """`db` 必需：路由会先 `prepare(conn, question)` 取关键词（用扩展分词），
     连接不能是 None —— 三路虽然被打桩，但预处理是真的。"""
     import generation.router as router_mod
@@ -107,16 +107,17 @@ async def test_maybe_single_streams_with_top1_context(monkeypatch, db):
         return {"qa_id": qid, "standard_question": "Q", "official_answer": text,
                 "category": "E", "route": route, "s": s}
 
-    # a: jieba .9 + simple .9 + vec .9 = 2.7/6 = 0.45 → maybe_single（含边界）。
+    # 三路取同一 s，`maybe_s` 由当前权重/阈值反解到 maybe 档中点
+    # （写死 0.9 会在权重标定的当天就滑出该档 —— 见 conftest.band_s）。
     monkeypatch.setattr(router_mod, "field_lookup", lambda *a, **k: [])
     monkeypatch.setattr(
         router_mod, "fts5_search",
-        lambda *a, **k: [_hit("a", "标准答案甲。", 0.9, "jieba"),
-                         _hit("a", "标准答案甲。", 0.9, "simple")],
+        lambda *a, **k: [_hit("a", "标准答案甲。", maybe_s, "jieba"),
+                         _hit("a", "标准答案甲。", maybe_s, "simple")],
     )
     monkeypatch.setattr(
         router_mod, "vector_search",
-        lambda *a, **k: [dict(_hit("a", "标准答案甲。", 0.9, "vec"))],
+        lambda *a, **k: [dict(_hit("a", "标准答案甲。", maybe_s, "vec"))],
     )
     fake = FakeProvider()
     events = [e async for e in router_mod.answer_stream(db, "s", "测试问题", fake, _zeros)]
@@ -134,7 +135,7 @@ async def test_maybe_single_streams_with_top1_context(monkeypatch, db):
 
 
 @pytest.mark.anyio
-async def test_maybe_multi_context_top2(monkeypatch, db):
+async def test_maybe_multi_context_top2(monkeypatch, db, maybe_s):
     import generation.router as router_mod
 
     def _hit(qid, text, s):
@@ -146,23 +147,24 @@ async def test_maybe_multi_context_top2(monkeypatch, db):
         return []
 
     def fake_fts(conn, store_id, query, top_k=5, prepared=None):
-        return [dict(_hit("a", "答案甲", 0.9), route="jieba"),
-                dict(_hit("b", "答案乙", 0.89), route="jieba"),
-                dict(_hit("a", "答案甲", 0.9), route="simple"),
-                dict(_hit("b", "答案乙", 0.89), route="simple")]
+        return [dict(_hit("a", "答案甲", maybe_s), route="jieba"),
+                dict(_hit("b", "答案乙", maybe_s - 0.01), route="jieba"),
+                dict(_hit("a", "答案甲", maybe_s), route="simple"),
+                dict(_hit("b", "答案乙", maybe_s - 0.01), route="simple")]
 
     # 签名须与 vector_search 同步（含 table：双 embedding 下路由透传当前表）。
     def fake_vec(conn, store_id, vector, top_k=5, table="vec_qa_local"):
         assert table == "vec_qa_local"
-        return [dict(_hit("a", "答案甲", 0.9), route="vec"),
-                dict(_hit("b", "答案乙", 0.89), route="vec")]
+        return [dict(_hit("a", "答案甲", maybe_s), route="vec"),
+                dict(_hit("b", "答案乙", maybe_s - 0.01), route="vec")]
 
     monkeypatch.setattr(router_mod, "field_lookup", fake_field)
     monkeypatch.setattr(router_mod, "fts5_search", fake_fts)
     monkeypatch.setattr(router_mod, "vector_search", fake_vec)
 
     # fts 命中按 route 分发给 jieba/simple 两路；vec 同理 →
-    # a:2.7/6=0.45，b:2.67/6=0.445，gap 0.005 → maybe_multi。
+    # a / b 都落在 maybe 档且 gap < GAP（b 比 a 低 0.01，换算后 gap≈0.008）→
+    # maybe_multi。两档的绝对分值由 `maybe_s` 反解，不写死。
     fake = FakeProvider()
     result = await router_mod.answer(db, "s", "测试问题", fake, _zeros)
     assert result["type"] == "llm"
@@ -173,7 +175,7 @@ async def test_maybe_multi_context_top2(monkeypatch, db):
 
 
 @pytest.mark.anyio
-async def test_llm_error_path(monkeypatch, db):
+async def test_llm_error_path(monkeypatch, db, maybe_s):
     import generation.router as router_mod
 
     def _hit(qid, text, s, route):
@@ -183,13 +185,13 @@ async def test_llm_error_path(monkeypatch, db):
     monkeypatch.setattr(router_mod, "field_lookup", lambda *a, **k: [])
     monkeypatch.setattr(
         router_mod, "fts5_search",
-        lambda *a, **k: [_hit("a", "标准答案甲。", 0.9, "jieba"),
-                         _hit("a", "标准答案甲。", 0.9, "simple")],
+        lambda *a, **k: [_hit("a", "标准答案甲。", maybe_s, "jieba"),
+                         _hit("a", "标准答案甲。", maybe_s, "simple")],
     )
-    # 三路和 2.7/6=0.45 → maybe_single，LLM 必被调用一次后超时。
+    # 三路同 s（maybe_s 由常量反解到 maybe 档）→ maybe_single，LLM 必被调一次后超时。
     monkeypatch.setattr(
         router_mod, "vector_search",
-        lambda *a, **k: [dict(_hit("a", "标准答案甲。", 0.9, "vec"))],
+        lambda *a, **k: [dict(_hit("a", "标准答案甲。", maybe_s, "vec"))],
     )
     fake = FakeProvider(error=ProviderError("timeout", "x 超时（30.0s）"))
     result = await router_mod.answer(db, "s", "测试问题", fake, _zeros)

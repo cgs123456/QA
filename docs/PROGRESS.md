@@ -317,11 +317,14 @@
   - 已完成：**P1**（匹配根因修复 + v2 基线）、**P2**（Excel/PDF 导入审核流，
     测试并进 `test_import_p1.py`）、**P3**（映射确认 + 语义范围审核 UI）、
     **P4**（首字延迟台账，缺真实 key 延期）、**C1b**（采集→VAD→端点→uplink→sidecar 生产链打通）、
-    **P5**（双 embedding 基建）、**P7**（窗口级增强：提词窗 / 捕获排除 / 托盘 / 开机自启）。
-  - 在途：**P8**（降级链 + 降级页，本会话；`security/fallback.rs` / `keychain.rs` /
-    `generation/fallback.py` / `diagnostics/degrade.py` / `routers/settings.py` 的
-    `/diagnostics/degrade` / 前端 provider-degraded 展示）—— **未提交，勿动其文件**。
-  - 阻塞：**P6** 阻塞于主人投喂。待派：**P9** / **P10**。
+    **P5**（双 embedding 基建）、**P7**（窗口级增强：提词窗 / 捕获排除 / 托盘 / 开机自启）、
+    **P9**（导出恢复 + 本地 CLI，条目与代码均在仓）。
+  - 在途：**P8**（降级链 + 降级页；条目与代码均在仓，提交归 G0）；
+    **P10**（F2.3 高亮 + SCK 预研 + PROGRESS 清理，本会话；
+    `retrieval/fts5_search.py` / `generation/router.py` 高亮段 /
+    `src/pages/Search.tsx` HitPreview / `src/lib/highlight.ts(+test)` /
+    `docs/research-sck.md`）—— **未提交，勿动其文件**。
+  - 阻塞：**P6** 阻塞于主人投喂。待派：—（P9 已落地，P10 在途）。
   - **M2 tag 仍暂缓，剩 4 项环境阻塞**（均非本机可闭）：R19 缺真实录音 /
     G1 缺 Ollama（云端 key 路径待主人）/ M2-13 缺 macOS-Linux 机器 / M2-12 缺 Tauri 壳。
   - **旧「下一项」四条已被取代（勿再引用）**：① `endpoint.rs` 端点状态机**已落地**
@@ -368,6 +371,29 @@
   需 100 题评测集标定后写回。已记录的已知代价：3-gram Jaccard 对中文容错很窄 ——
   「发货周期是多久」vs「发货周期是多久呢」= 5/6 ≈ 0.833 < 0.85，ASR 多吐一个语气词即漏去重。
   代价不对称（漏去重多检索一次；误去重则把上一题答案冒充本题答案），故保留严格侧。
+- Rust 工具链：**B 机已复验完成（2026-09-15）**——`cargo test` 全目标 78 passed、
+  `clippy -D warnings` 0 告警（见「实测数字档案」task-20 条）。
+  仍缺的是**壳**验证（需 Tauri 壳/真实桌面，与工具链无关）：
+  `$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志
+  可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
+  （注：A 机的「本盒子无 cargo」只适用于 A 机，勿外推）
+- vendor 二进制：**B 机已闭合（2026-09-15）**——`sidecar/vendor/libsimple.dll`（1.5MB）就位，
+  全量 pytest 由 A 机的 137 passed + 16 error + 1 fail 变为 **229 passed / 0 failed / 0 skipped**；
+  QA 链真机联测已完成（`scripts/e2e_m2_gate1_qa.py`，门槛1 固定答案路径
+  由「引用常量」升级为**实测 6.82ms**，见 `docs/acceptance-m2.md` §2）
+- task-2 人工 DoD（有工具链机器）：① 手动 kill sidecar 的 python 进程 → 日志可见 `restart 1/3 in 1s`… 最多 3 次并恢复 health（计数在 health 恢复后清零）；② 连续 kill 致 4 连败 → 前端降级页（reason=restart_exhausted）+ 事件 sidecar://degraded；③ 伪造 protocol_version（如改 main.py PROTOCOL_VERSION="9.9"）→ 降级页 reason=version_mismatch；④ 应用退出后 tasklist 无残留 python sidecar 进程
+- Python 为 3.13.14（本机可用版本），PRD 要求 3.11——后续 CI/打包时需按 3.11 锁定验证
+- 1b 测量残留 6 项（task-15×2/task-19/task-18/1b-4/1b-3）已并入上节 `## 延期台账`（原文搬运），本节不再重复。
+
+## 延期台账（1b 收尾 + Phase 2，唯一权威，2026-09-15 P10 立）
+
+> 本节合并两处台账：`## 待人工验证` 中的 1b 测量残留 6 条（下文原样搬运，
+> 一字未改）与散落各处的 Phase 2 延期项（此处只收录索引 + 状态，数字以原文为准）。
+> M2 相关仍以 `docs/acceptance-m2.md` §7 为准（该节自称唯一权威，范围是 M2；
+> 本节是跨 Phase 的总索引，两者不重叠）。
+
+### 1b 收尾（6 项，全部外部阻塞；harness/方法已冻结，只等投喂或真机）
+
 - task-15 ASR 识别质量（**必做，合成样本不能替代**）：本轮只测了**时延**，
   音频是合成信号（谐波堆 + 音节包络），足以驱动真实算力路径但**文本无意义**。
   需真实中文录音：① 录一段中文（含专有名词/中英混说更好），走完整链路
@@ -403,18 +429,18 @@
      `StreamRebuilt`，且 seq/ts 不重启（`set_input_rate` 只换 resampler）。
   ③ Linux monitor（PulseAudio）与 macOS mic-only 未在本机（Windows）验证，
      需对应平台各跑一次 `cargo test`。
-- Rust 工具链：**B 机已复验完成（2026-09-15）**——`cargo test` 全目标 78 passed、
-  `clippy -D warnings` 0 告警（见「实测数字档案」task-20 条）。
-  仍缺的是**壳**验证（需 Tauri 壳/真实桌面，与工具链无关）：
-  `$env:INTERVIEWCOPILOT_PYTHON="<python>"; pnpm tauri dev` 壳启动且日志
-  可见 `[sidecar] handshake parsed: port=...`；前端显示 sidecar connected
-  （注：A 机的「本盒子无 cargo」只适用于 A 机，勿外推）
-- vendor 二进制：**B 机已闭合（2026-09-15）**——`sidecar/vendor/libsimple.dll`（1.5MB）就位，
-  全量 pytest 由 A 机的 137 passed + 16 error + 1 fail 变为 **229 passed / 0 failed / 0 skipped**；
-  QA 链真机联测已完成（`scripts/e2e_m2_gate1_qa.py`，门槛1 固定答案路径
-  由「引用常量」升级为**实测 6.82ms**，见 `docs/acceptance-m2.md` §2）
-- task-2 人工 DoD（有工具链机器）：① 手动 kill sidecar 的 python 进程 → 日志可见 `restart 1/3 in 1s`… 最多 3 次并恢复 health（计数在 health 恢复后清零）；② 连续 kill 致 4 连败 → 前端降级页（reason=restart_exhausted）+ 事件 sidecar://degraded；③ 伪造 protocol_version（如改 main.py PROTOCOL_VERSION="9.9"）→ 降级页 reason=version_mismatch；④ 应用退出后 tasklist 无残留 python sidecar 进程
-- Python 为 3.13.14（本机可用版本），PRD 要求 3.11——后续 CI/打包时需按 3.11 锁定验证
+
+### Phase 2（索引；状态见原文，本节不复述数字）
+
+| 事项 | 状态 | 落点 |
+|---|---|---|
+| LLM key（openai/claude/gemini/groq） | 延期（缺真实 key） | `benchmark.md` F6.1 延期台账节 |
+| custom LLM 端点 | 未配置 | 同上表 custom 行 |
+| embedding cloud key | 延期（mock 全覆盖，`bench_embedding.py` exit 2） | `benchmark.md` Cloud embedding 节 |
+| Linux keyring 真机 | 延期（mock 全覆盖） | `benchmark.md` Linux keyring 节（4 行关闭条件） |
+| Ollama（G1） | 缺本地服务 | `acceptance-m2.md` §7 / task-20 复验仍未闭 |
+| macOS/Linux 真机 + Tauri 壳 | 缺环境 | 同上 |
+| R19 6 样本录音 | 缺投喂 | 见本节 1b 收尾（不重复收录） |
 
 ## 实测数字档案
 - **task-20 复验（B 机，2026-09-15）**：`pytest` **229 passed**（0 fail / 0 skip）；
@@ -611,17 +637,7 @@
    （关闭回归零 partial/单次全量调用/同段 id/静音零探测/失败无 error/迟到丢弃）
    **23 passed**（本机复跑通过）；WS 端到端（`api_client` fixture 系）与前端 `tsc`
    本机不可跑（缺 vendor / node_modules，待有依赖机器补，鉴权覆盖表已同步新端点）。
-- task-12 抽检（2026-09-14，8 项）：① 全量复跑 pytest 108 + vitest 10 + Playwright 1 全绿
-  （cargo 不可跑一贯记录；融合三案断言在仓）；② 评测集 20→59（+39 自然真题 tags=real，
-  单测改计分结构不断言分数线以防自我交易），重跑基线 **Top-3=0.490（24/49），零答错**，
-  demo 1.0 确为自测——验收 #6 改判**未达标**（根因：AND 语义 + 精确门 + 模糊上限，D6 修）；
-  距 100 题目标还差 41 题；③ null **10/10 拒答**（含纸质发票/货到付款对抗项），红线守住；
-  ④ 打包 System32 重验 ALL PASS（包内无 data/，DB 落 LOCALAPPDATA；包构建早于 nonce 变更，
-  契约行为不受影响，重打由 CI 覆盖）；⑤ 日志红线：真机全链路 stderr 136 字节，
-  token/问题原文/答案原文零命中，仓库无真实密钥（仅 sk-test-* 固件）；⑥ 四数在案
-  （体积 200060425、启动 ~1.1ms 级、sqlite 3.53.1、simple v0.7.1 + 五步耗时）；
-  ⑦ 降级链路维持待人工（需壳）；⑧ tag 不存在，维持暂缓（#6 未达标是主因）。
-   verdict 变更同步回 `docs/acceptance-m1.md`（§6 抽检结论表 + #6 改判 + 基线快照更新）。
+- task-12 抽检（2026-09-14，8 项）：已归档 → `docs/archive/PROGRESS-2026-09-14.md`（verdict 以 `docs/acceptance-m1.md` §6 现行为准；数字以测试计数台账 §1 为准）。
 - task-19 用数据收尾 1b（2026-09-14，样本/R19/三平台三项记挂起，harness 全落地）：
   **样本骨架**：`sidecar/tests/audio_samples/`（README 录制指南 + `manifest.json`
   6 槽全 `missing` + wav/标注 json gitignore 永不入库，录音只放本地）；
@@ -644,24 +660,8 @@
   全量 pytest **137 passed**（16 error + 1 fail 全系本机缺 vendor 二进制，
   P0 纪律停等投喂，与本轮无关）；前端 `tsc` 本机不可跑（无 node_modules）。
   主报告：`docs/audio-regression.md` 落盘（三张实测表 PENDING + 方法冻结 + 裁决在案）。
-- task-20 M2 验收（2026-09-14，PRD 不在仓、§6.2 按 1b 任务史重建并标注）：
-  主报告 `docs/acceptance-m2.md` 落盘：9 通过 / 2 有条件通过 / 1 阻塞 / 4 未达标，
-  `m2-audio-pipeline` tag **暂缓**（M1 §4 同款程序：缺件/R19/平台/vendor/前端目检六项清除表在案）。
-  **门槛1**：权重两次真实下载（faster-whisper 148MB/188s，paraformer 243MB/354s，
-  SHA 全过）；同机高负载下（xray 140%+tun2proxy 90%，推理剩 ~1.5 核老 CPU）
-  faster-whisper 18.0s FAIL vs paraformer 1.14s 合成总账 1147ms PASS——
-  定档建议中文默认切 paraformer（未改，等指示）；生成答案无 Ollama 不可判。
-  脚本 `scripts/e2e_m2_gate1.py`（--provider 可复现）+ 证据 `.workbuddy-ai/gate1_result.json`。
-  **门槛2**：`scripts/e2e_m2_gate2_soak.py` 双路真实 WS 600s 各 100 段，
-  零丢段零污染（HashProvider 逐段核对）、RSS +3.6MB——GATE2_PASS（sidecar 范围，
-  Rust 采集侧待 §6 程序）。证据 `.workbuddy-ai/gate2_result.json`。
-- task-20 门槛数（2026-09-14，本盒子：Haswell 4 核高负载 + Python 3.12.10）：
-  门槛1（`scripts/e2e_m2_gate1.py`，3s 段 n=3，真实权重+uvicorn+WS）：
-  faster-whisper 冷加载 5543ms / 转写中位 17998.6ms（17368.4/18417.1）→ 合成总账 FAIL；
-  paraformer 冷加载 7186ms / 转写中位 1144.6ms（1131.2/1439.7）→ 合成总账 **1147ms PASS**。
-  门槛2（`scripts/e2e_m2_gate2_soak.py`，双路各 100 段/600s）：
-  ends==finals（100/100 双路）、hash 零失配、e2e 中位 ~6ms（HashProvider 下限口径）、
-  RSS 71.1MB → +3.6MB/604s（<50MB 线）。
+- task-20 M2 验收（2026-09-14 初版）：已归档 → `docs/archive/PROGRESS-2026-09-14.md`（改判第三版见本文“M2 验收报告改判”条，`docs/acceptance-m2.md` 现行有效）。
+- task-20 门槛数（2026-09-14，A 机 Haswell 高负载）：已归档 → `docs/archive/PROGRESS-2026-09-14.md`（B 机复验数字见本文“task-20 复验”条与 `docs/benchmark.md`；A 机建议已撤回）。
 - F6.1 多 LLM 全量补齐（2026-09-15）：三新 Provider + registry 扩展。
   **新增**：`claude_provider.py`（Anthropic Messages API，`event: content_block_delta` 独立状态机）、
   `gemini_provider.py`（`streamGenerateContent?alt=sse`，`candidates[0].parts` 拼接）、
@@ -1004,29 +1004,38 @@
 > `142 ≠ 148` 四处记账漂移。**结论先行：四处均无法精确归因**（原因见 §3），
 > 防再漂移靠 §4 的纪律，不靠补算。
 
-### 1. 当前全量（2026-09-15 16:07，`720de4c` + P8 在途）
+### 1. 当前全量（2026-09-16，P12 本机补跑；B 机本 shell，node v22.22.2 / python 3.13.14）
 
-- `pytest --collect-only -q` → **367 collected**；全量 `pytest` → **367 passed / 1 skipped**
-- `vitest run` → **159 passed / 11 files**
+- `pytest --collect-only -q` → **396 collected**；全量 `pytest`
+ （`NO_PROXY=127.0.0.1,localhost`）→ **396 passed / 1 skipped**（91.20s）
+- `vitest run --reporter=verbose` → **167 passed / 12 files**（24.29s；
+  159 + `highlight.test.ts` 8。`liveqa.test.ts` 30 与旧台账一致——原“P10 新增 6 + liveqa +1
+  未跑”已过期：`highlight` 实测为 **8** 非 6，liveqa +1 早已在 159 内。以本轮逐文件枚举为准）
+- `tsc --noEmit` **0**（初跑 2 错误：P5 遗留 `useEmbedding.ts` 的 `refetchInterval`
+  首参误写成 `data`，已修为 `(query) => query.state.data…`，详见 `acceptance-m3.md` §8.3）；
+  `eslint src tests/e2e --max-warnings=0` **0**
 
 **1 skipped 的原因（E 项）**：唯 `webrtcvad` 可选依赖缺失时跳过一条 VAD 相关用例
 （导入期 `skipif` 判定）。与 C1b 行记录的 skip **同源**，**不是失败、不是漏测**；
 B 机装了 `webrtcvad-wheels` 故为 0 skipped —— 这就是 A/B 两机 skipped 数不同的全部原因。
 
-**pytest per-file（collected）**：`test_llm_providers` 39 / `test_embedding` 32 /
+**pytest per-file（collected，本轮实测）**：`test_llm_providers` 39 / `test_embedding` 32 /
 `test_import_p1` 29 / `test_asr_fallback` 25 / `test_query_prep` 19 /
-`test_audio_protocol` 17 / `test_llm_fallback` 15 / `test_audio_eval` 15 /
-`test_local_agreement` 13 / `test_asr_text_clean` 13 / `test_sherpa_providers` 11 /
-`test_low_latency` 10 / (`test_retrieval` `test_migrations` `test_diagnostics_degrade`
-`test_asr_switch` `test_answer_router`) 各 8 / (`test_providers` `test_knowledge_compiler`
-`test_hybrid_rank` `test_connection`) 各 7 / `test_qa_stream` 6 / (`test_vector_search`
-`test_simple_extension` `test_routers` `test_prompt_guard` `test_model_download`
-`test_downloader` `test_auth`) 各 5 / (`test_settings` `test_embedder` `test_diagnostics`)
-各 4 / `tests/eval/test_eval` 3 / `test_auth_coverage` 2 / (`test_rollback` `test_health`
-`tests/eval/test_eval_full`) 各 1。
+`test_audio_protocol` 17 / (`test_export_import` `test_audio_eval`
+`test_llm_fallback`) 各 15 / (`test_asr_text_clean` `test_local_agreement`) 各 13 /
+(`test_highlight` `test_sherpa_providers`) 各 11 / `test_low_latency` 10 /
+`test_hybrid_rank` 9 / (`test_retrieval` `test_asr_switch` `test_answer_router`
+`test_migrations` `test_diagnostics_degrade`) 各 8 / (`test_knowledge_compiler`
+`test_providers` `test_connection`) 各 7 / `test_qa_stream` 6 /
+(`test_prompt_guard` `test_simple_extension` `test_routers` `test_model_download`
+`test_downloader` `test_auth` `test_vector_search`) 各 5 /
+(`tests/eval/test_eval` `test_settings` `test_embedder` `test_diagnostics`) 各 4 /
+`test_auth_coverage` 2 / (`test_rollback` `test_health`
+`tests/eval/test_eval_full`) 各 1（求和 396，与 collected 一致）。
 
-**vitest per-file**：trigger 50 / liveqa 30 / capture 28 / importFlow 15 / api 7 /
-ReviewPanel 6 / EmbeddingConfig 6 / ColumnMapping 5 / Knowledge 4 / windowView 4 / sse 4 = **159**。
+**vitest per-file（本轮实测）**：trigger 50 / liveqa 30 / capture 28 / importFlow 15 / api 7 /
+ReviewPanel 6 / EmbeddingConfig 6 / ColumnMapping 5 / Knowledge 4 / windowView 4 / sse 4 /
+highlight 8 = **167**。
 
 ### 2. 四处漂移的归属（A–D 项）
 
@@ -1103,3 +1112,203 @@ ReviewPanel 6 / EmbeddingConfig 6 / ColumnMapping 5 / Knowledge 4 / windowView 4
 `src/lib/{liveqa,qa}.ts(+test)`、`src/pages/Search.tsx`、
 `sidecar/src/diagnostics/degrade.py`、`sidecar/src/generation/fallback.py`、
 `sidecar/tests/{test_qa_stream,test_diagnostics_degrade,test_llm_fallback}.py`、`docs/benchmark.md`。
+
+- P8 可用性收尾（2026-09-15，B 机 Ryzen 5 5500 / 12 逻辑核 / 31.9GB / Python 3.13.14 / cargo 1.98.1）：
+  **LLM 降级链**：新增 `sidecar/src/generation/fallback.py`（`FallbackLLMProvider`：
+  首选→备选按序尝试，首 chunk 前失败（超时/限流/401）即换级透传，首 chunk 后失败
+  不混流、走既有 error 路径；全灭抛末级错并挂全 trail；进程级断路器连坏 3 次冷却
+  60s（初值，时钟可注入），链内永不 sleep——Groq 限流即换级即快速切换；
+  `build_chain` 首选严格构造、备选懒构造记 config、重名去重、上限 5 级）。
+  `generation/router.py` 结果加法键 `provider`（实际出力，direct/fail_closed/error 为 null）
+  + `degraded`（`["备选:kind"]`，复用 asr_final 模式）；`llm_calls` 改按实际尝试级数
+  （单体恒 1，旧断言零改动）。`routers/qa.py`：`AskBody.fallbacks` 透传（省略即单体），
+  embed 故障进统一计数后原样上抛走既有 warnings 降级。
+  **统一计数**：新增 `sidecar/src/diagnostics/degrade.py`（`record/snapshot/reset`，
+  链名+名+kind 纯计数，R14）——ASR 经 `asr/runtime.py` 单例挂适配器，LLM 经问答链
+  `on_degrade`，embedding 经重建失败 + 问答向量故障；新端点 `GET /diagnostics/degrade`
+  （鉴权覆盖已同步）。**Fail-Closed 不进链**（分支在链之前返回，单测钉死零调用）。
+  **keyring Linux fallback（F6.3 Phase 2）**：`fallback.rs` 重写为真实现
+  （HKDF-CTR+HMAC-SHA256，sha2 由 dev-deps 提升为正式依赖——`Cargo.lock`
+  **零新增 crate**，同版本 0.10.9；salt 取 `/dev/urandom`，密钥绑
+  `/etc/machine-id`，文件 `keys.enc.json` 原子重命名 + 0o600，明文禁用——
+  任何失败都是 `Err`）；`keychain.rs` 加 `SecretStore` 缝：三态分发
+  （健康赢/后端坏走文件/文件坏大声错）+ mock 后端；`save_api_key` 返回文案改中性词。
+  **前端**（本 shell 无 node 未跑三件套，见诚实记录⑤）：`qa.ts` 加可选
+  `provider/degraded` + `fallbacks` 透传；`Search` 答案卡 llm 档标注实际出力；
+  `liveqa.ts` 标签带 provider 后缀（旧 fixture 无该字段，老断言不受影响）；
+  Settings 新增降级计数区（独立拉取，挂了不连累音频诊断）。
+  **DoD 数字（本机实测）**：`pytest` **367 passed / 1 skipped**
+  （归属：基线排除法实测 **344** + 新增 `test_llm_fallback` **15** +
+  `test_diagnostics_degrade` **8** = 367；三组单测 = 降级顺序/快速切换/
+  拒绝不重试，另有熔断/全灭/mid-stream/build 校验/端点透传）。
+  `cargo test --lib` **146 passed**（含 security 15 = fallback 10 + keychain 6，
+  unix-only mode 1 项本机自动略过）；`clippy --all-targets` **0 告警**；
+  `cargo fmt --check` **0**（`Cargo.lock` 系本轮首次生成落仓，task-7 待办兑现）。
+  真机：`OPENAI_API_KEY` 为空 → `bench_embedding.py` 保持 exit 2；
+  Linux keyring 真机记 `benchmark.md` 新延期节（4 行关闭条件）。
+  `api-contract.md` +4 行（ask `fallbacks`、done `provider/degraded`、
+  `/diagnostics/degrade`）。**I 项闭环**：§5 转待办的 6 端点逐一核对
+  （`test_auth_coverage.py:20,21,27,30,31,32` + degrade `:40`）**均已在表**，无需补。
+  **诚实记录**：① tsc/eslint/vitest 未跑（本 shell 无 node；前端改动限加法可选字段 +
+  两处条件渲染 + 一处标签后缀，另 `liveqa.test.ts` +1 用例沿旧 pattern；需有 node
+  机器补跑）。② Windows PowerShell 5.1 `Get/Set-Content` 默认 GBK 会咬坏 UTF-8 中文
+  （破折号/箭头/句号末字节变 `0x3F`、注释吞行），已用“无效 UTF-8 字节必为损坏”
+  准则逐字节审计恢复，并以编译 + 15 安全单测 + clippy/fmt 全绿为证；教训：以后文本
+  编辑只走专用工具，shell 只跑命令。③ 记账更正：本会话早前误记基线 343，
+  排除法重测为 **344**（344+23=367 严丝合缝；另 §1 台账 per-file 求和 367 自洽）。
+  ④ `fuse` 对包含命中仍联动 `s_field=1.0`（既有行为，v3 缺口①已在案，本轮不动）。
+  ⑤ 熔断阈值 3 次/60s、链上限 5 级均为初值，待 W4 样本调。
+  **P8 文件清单（供 G0 切分）**：新增 `generation/fallback.py`、
+  `diagnostics/degrade.py`、`tests/test_llm_fallback.py`、
+  `tests/test_diagnostics_degrade.py`；改动 `generation/router.py`、
+  `asr/runtime.py`、`routers/{qa,embedding,settings}.py`、`app.py`（仅挂载一行）、
+  `tests/{test_auth_coverage,test_qa_stream,test_answer_router}.py`（后两者仅跟进新形参）、
+  `src-tauri/{Cargo.toml,Cargo.lock}`、`security/{fallback,keychain}.rs`、
+  `commands/settings.rs`（返回文案一词）、`src/lib/{qa,liveqa}.ts`、
+  `src/lib/liveqa.test.ts`、`src/pages/{Search,Settings}.tsx`、
+  `docs/{api-contract,benchmark}.md`。与 P7/P5 交错文件：`Settings.tsx`、
+  `api-contract.md`（行级交错，沿用 index-only 归属纪律）。
+- P9 导出恢复 + 本地 CLI（F4.5/F4.6/F11.6，2026-09-15，B 机）：
+  **新增**：`knowledge/exporter.py`（快照/export JSON-MD 双渲染/restore，
+  列清单 `*_EXPORT_COLUMNS` + `_SCHEMA_EXCLUSIONS`）+ `knowledge/stores.py`
+  加 `clear_store_content`（覆盖恢复清内容留 store 行，短事务）+
+  `cli/` 包（`__main__.py` 参数校验 + `commands.py` 直接读库：导出 `mode=ro`
+  只读连接 + user_version 校验不迁移，恢复走同一 connect+迁移）+
+  `scripts/build-cli-win.ps1`（单文件另计，主包不动）。
+  **接线改动（三处，只加可选透传）**：`validator.validate_field_items` 留 `id`、
+  `field_extractor.extract` 过 `id`、`compiler` 按独立命名空间取可用 field id
+  （qa/field 各自主键，合查会误换新——单测覆盖同串 id 分属两表）。
+  既有导入路径（md/json/excel/pdf）从不产 field id，行为不变。
+  **契约**：JSON 为忠实通道（无时钟字段，同内容多次导出逐字节相同；
+  export→新库import→export 逐字节等价，store 信封 id 除外属 DB 作用域身份）；
+  MD 为规范回放（`?` 结尾走 H2 换行保留，其余走 Q/A 块；多段 value 只回首段、
+  别名不渲染靠重建、空白归一——三条有损边界均已文档化并单测锁定）；
+  id 策略：空闲保留、被占换新（compiler 既有行为），同库新 store 碰撞换新。
+  **DoD 数字（本机实测）**：`test_export_import.py` **15 passed**
+  （JSON 往返×2/确定性/分块流式=整包/ MD 稳定/截断锁定/缺列容错/覆盖语义/
+  坏快照×4/列锁定/CLI 子进程×3/构建脚本作用域/同库碰撞换新）；
+  `pytest` **382 passed / 1 skipped**（367 + 15；skip 同源 webrtcvad 未变）。
+  CLI 真机：108 QA + 29 字段样例库导出（35KB json / 11KB md）→ 新库文件恢复
+  108+0 → 重导出**逐字节等价**（store.id 归一后）；同库恢复内容一致、id 换新。
+  体积：`sidecar/build.py` 零改动、`pyproject` 零新依赖（exporter/CLI 全标准库），
+  单文件包未执行构建（expensive + dist  churn，命令已落盘备 packaging 机）。
+  **诚实记录**：① `text=True` 子进程必须显式 `encoding="utf-8"`——父进程侧按
+  locale（本机 GBK）解码，中文输出直接炸 reader 线程、streams 变 None
+  （两个 CLI 用例初败根因，已修）。② 种子计数：`## 问答` 碰撞用例使 field 为 4
+  非 3，初版断言写错已按实现更正（实现对，测试错）。③ 无 Rust/前端改动，
+  clippy/tsc/eslint/vitest 均不涉及（无 node 照旧）。
+  **P9 文件清单（供 G0 切分）**：新增 `knowledge/exporter.py`、
+  `cli/{__init__,__main__,commands}.py`、`scripts/build-cli-win.ps1`、
+  `tests/test_export_import.py`；改动 `knowledge/{stores,validator.py,
+  compiler.py,field_extractor.py}`（后三者仅加可选 id 透传）。
+  与他任务交错文件：无（`test_auth_coverage.py` 未动——无新 HTTP 端点）。
+- P10 高亮 + SCK 预研 + PROGRESS 清理（F2.3/文档/编辑，2026-09-15，B 机）：
+  **后端**：`retrieval/fts5_search.py` 增 `simple_highlight(conn, store, qa_id,
+  col, expr, pre, post)`（单条列级打标）+ `_attach_highlights`（fts 全路逐行
+  附 `hl_question`/`hl_answer`，单列失败只回落原文不炸检索）+ 常量
+  `COL_QUESTION=1/COL_ANSWER=2`（R4 列序，结构+行为双锁定）；
+  `generation/router.py` 增 `_hl_map`/`_sources(hl_map)`/`select_contexts` 透传
+  （fuse 与 hybrid_rank **零改动**——只管分数不管展示，评分路径逐字节无影响）。
+  `/knowledge/search` fts_hits 加法键；`api-contract.md` +1 行。
+  **单测**：`tests/test_highlight.py` **11 passed**（列锁定结构+行为/
+  中文词级/simple 字级/拼音/自定义标记/非法列+空表达式/怪查询不炸/
+  端点片段/answer 透传）。**前端**（本 shell 无 node 未跑三件套，见诚实记录④）：
+  `src/lib/highlight.ts`（escape-then-replace 安全模型+XSS 单测）+ `.test.ts` 6 用例、
+  `Search.tsx` HitPreview（有标渲染/无标回落 60 字）、`QASource` 加可选
+  `hl_*` 键、`liveqa.test.ts` +1 用例（旧 fixture 无 provider，老断言免疫）。
+  **research**：`docs/research-sck.md`（只写文档不写码；能力/限制/Phase 4 八项清单，
+  版本断言全部进清单待真机核）。
+  **PROGRESS 手术**：Phase 2 表同步（P9 完成/P10 在途）；新建
+  `## 延期台账`（待人工验证区 6 条 1b 残留**逐字节搬运已验** + Phase 2 索引表，
+  M2 范围仍以 acceptance-m2 §7 为准）；`docs/archive/PROGRESS-2026-09-14.md`
+  新建并迁入 task-12/task-20-M2初版/task-20门槛数-A机（三处被取代版本，
+  主文档留同名指针）。
+  **DoD 数字（本机实测）**：`pytest` **393 passed / 1 skipped**
+  （382 + 新增 `test_highlight` **11**；skip 同源 webrtcvad 未变）。
+  **诚实记录**：① `read` 工具曾返回过期缓存（与 grep 实测矛盾），此后关键文件
+  一律以 git/grep/python 直读为准——教训：多会话并发写时不信任缓存读。
+  ② 端点种子必须 4 篇 QA：2 篇触发小语料 idf 塌缩全被 -0.5 门限滤掉
+  （fts5_search.py 已文档化的已知特性，非 bug）。③ answer 集成用例改打桩：
+  demo 种子真机分数已漂移（P6 字段联动后），硬编码 maybe 不可靠，
+  透传逻辑本身与引擎解耦单测。④ tsc/eslint/vitest 未跑（本 shell 无 node；
+  taskP7 会话曾有 node，若其 shell 顺带覆盖以其记录为准）。
+  ⑤ highlight() 对未命中行返回原文无标、完全未匹配返回 None（探针实测行为，
+  非猜测）。⑥ hybrid_rank.py 在途有他会话改动（`git status` 可见），本轮刻意
+  零触碰——高亮走 router 层补回。
+**P10 文件清单（供 G0 切分）**：新增 `tests/test_highlight.py`、
+   `src/lib/highlight.ts(+test)`、`docs/research-sck.md`、
+   `docs/archive/PROGRESS-2026-09-14.md`；改动 `retrieval/fts5_search.py`、
+   `generation/router.py`（高亮段）、`src/lib/{qa,liveqa}.ts`、
+   `src/lib/liveqa.test.ts`、`src/pages/Search.tsx`、
+   `docs/{api-contract.md,PROGRESS.md}`（`routers/knowledge.py` **零改动**——
+   端点自动透传 fts_hits 新键）。与他任务交错：PROGRESS.md 全文
+   （G0 正在切分，行号仅供当日参考，以锚点文本为准）。
+- M3 核心功能闭环验收（PRD §6.3，2026-09-15，B 机）：
+  **结论**：11 通过 / 2 部分通过 / 1 未达标（R19 缺数据） / 1 待人工（云端联调网络不通）。
+  `m3-core-features` tag **暂缓**（4 阻塞项全非「缺代码」）。
+  **通过项**：P1 实现落地+复现、P2 SSE/契约、R17 固定答案 2.4ms、P5 Embedding 基建（local bge-512 / cloud 3072 双 provider 就位）、P8 可用性后端/类型/构建、P9 导出/CLI 三格式+幂等、P10 高亮/SCK 文档、诊断端点/面板、全量回归（pytest 393 / cargo 160 / clippy/fmt 0）。
+  **部分通过**：F6.1 模糊检索 <5s（检索侧 1.4ms OK / LLM 首字阻塞）、G1 固定答案三 Provider 全 PASS / 生成答案阻塞（无 Ollama + 外网 TCP 不通）。
+  **未达标**：R19 嘈杂子集（6 槽全空，harness 已定标 SELFTEST_PASS）。
+  **待人工**：云端 Provider 真机联调（OpenAI/Anthropic/Gemini 首字/总耗时/动作）——TCP 探针 `8.8.8.8:443`/`1.1.1.1:443`/`api.openai.com:443` 均 Timeout，**未发 HTTP、未碰 key**。
+  **1b 台账现状（同步写入 acceptance-m3 §2.1）**：endpoint.rs 已闭合（边界误差 0 帧）、C1b 接线已闭合（注入 E2E 3 passed）、R19 待样本、G1 生成答案待网络/凭据/Ollama 三选一、tag m2 暂缓 4 项。
+  **延期台账合并**（acceptance-m3 §7）：R19/G1-云端/平台真机/前端目检（4 项）+ 1b-HK 残项 2 条（dist-sidecar 重建 / CI 3.11 matrix），已闭合 3 项（M2-7/fmt/task-14 偏差）。
+  **DoD 数字**：`pytest` **394 passed / 1 skipped**（P10 393 + `test_vector_search` 1 修正）；`cargo test --lib` 146 / `--features audio-testharness` 160；clippy/fmt 0。
+  **诚实记录**：① 前端三件套未跑（无 node，P10 新增 7 用例未实测）；② `inject_e2e` 需 python 在 PATH（venv Scripts 加入后通过）；③ P1 Top-3 0.49 仍未达标（实现已落地，属 D6 重标定）；④ 云端 key 会话中曾明文提供，**本轮未落盘**，归档前需轮换。
+  **M3 文件清单（供 G0 切分）**：新增 `docs/acceptance-m3.md`、`docs/research-sck.md`、`sidecar/tests/test_highlight.py`、`src/lib/highlight.ts(+test)`、`sidecar/src/diagnostics/degrade.py`、`sidecar/tests/test_diagnostics_degrade.py`、`sidecar/src/knowledge/exporter.py`、`cli/{__init__,__main__,commands}.py`、`scripts/build-cli-win.ps1`、`sidecar/tests/test_export_import.py`、`scripts/eval_calibrate.py`、`docs/archive/PROGRESS-2026-09-14.md`；改动见 acceptance-m3 尾部清单。与他任务交错：PROGRESS.md 全文、`docs/acceptance-m2.md`（§7 合并）。
+- **P6 评测集冻结 + 全链标定（R15，2026-09-15 完成，2026-09-16 收口）**：
+  **结论**：Top-3 **0.9080**（≥0.85 ✅）/ null 拒答 **1.000**（13/13 ✅）/
+  direct 档答对 51、答错 5（与初值持平，未越红线 ✅）/ 答错 6（初值 18）/
+  非 null 题 Fail-Closed 率 0.3218（与初值持平，未劣化 ✅）。
+  **评测集**：`sidecar/tests/eval/questions_100.jsonl`，100 题 = 87 scored + 13 null（13%，硬约束 10–15）。
+  loader 三条硬校验（schema / **去重** / id 引用存在性），去重新增单测
+  `test_frozen_set_has_no_duplicate_questions`。
+  **定稿常量**（写回 PRD §3.3，含标定日期与评测集版本）：
+  `W_FIELD=1.5 / W_JIEBA=3.0 / W_SIMPLE=1.0 / W_VEC=4.0`（Σw=9.5）、
+  `TH_DIRECT=0.65 / TH_MAYBE=0.60 / GAP=0.15`、`LINK_MODE=entity_scaled`、
+  `DIST_CUTOFF=0.8`、`CONTAINMENT_MIN_LEN=2`、`CONTAINMENT_IN_ALIAS=false`、
+  `T_FTS=0.5` 与 `BM25_CUTOFF=-0.5` 未动（扫描中惰性）。
+  **R15 三步 + 前置匹配修复，每步重跑**：s0 基线 → s1 匹配修复（null 0.846→0.923、
+  direct 错 5→0）→ s2 向量门限 0.8（Top-3 0.8736）→ s3 权重（Top-3 0.9080、答错 16→9）
+  → s4 阈值（null 1.000、direct 对 51）。全过程与前后对比见 **`docs/eval-final.md`**。
+  **落盘前核查出的两个副作用（评测集覆盖不到，已修并钉测试）**：
+  ① 向量路不可用时剩余三路天花板 0.579 < TH_MAYBE → 全线拒答（违反降级不中断）；
+  ② 纯字段直查 1.5/9.5=0.158 → 拒答，而 29 字段中 **21 个无 QA 孪生**。
+  修复：分母只剔除「明确不可用」的路（`fuse(unavailable=…)` + `vector_search.has_vectors()`），
+  精确字段命中（s=1.0）走 decide 硬规则判 direct。四路全活时分母恒 = W_SUM，
+  **s0–s4 全部数字不受影响**（已重跑验证）。
+  **踩坑留档**：第一版把「召回为空」也当缺席剔除 → null 拒答 1.000 **崩到 0.154**；
+  「路挂了」≠「路说没找到」。两条反向断言已进 `test_unavailable_route_drops_from_denominator`。
+  **已知盲区**：100 题里 **0 道纯字段直查题**，故上述两个副作用是标定后人工核查才发现的。
+  补题（21 个无孪生字段各一题 + 「精确命中字段名但意图不同」对抗题）后需重跑全部五步。
+  **DoD 数字**：`pytest` **396 passed / 1 skipped**（新增精确字段直查 + 分母剔除 2 条；
+  路由类用例改用 `conftest.band_s` 按常量反解档位，不再写死 s=0.9 —— 写死会在标定当天滑档）。
+  **PRD**：`interview_copilot_prd_v1.0.md` §3.3 新增「融合与判定常量」表（数值 + 标定日期 +
+  评测集版本 + 两条判定层补充规则）；4 处 RRF 残留已清理（F5.4 / 目录树 / D6 / W2-3），
+  保留 3 处主动标注「非 RRF」。备份在 `.workbuddy-ai/backup/prd-v1.0-backup.md`。
+  **文件清单（供 G0 切分）**：新增 `docs/eval-final.md`、`scripts/eval_calibrate.py`；
+  改动 `sidecar/src/retrieval/{hybrid_rank,field_lookup,vector_search}.py`、
+  `sidecar/src/generation/router.py`、`sidecar/tests/eval/loader.py`、
+  `sidecar/tests/eval/test_eval.py`、`sidecar/tests/conftest.py`、
+  `sidecar/tests/{test_hybrid_rank,test_answer_router,test_llm_fallback,
+  test_llm_providers,test_highlight,test_diagnostics_degrade}.py`。
+- P12 Phase 2 在途改动落账 + 三件套补跑（2026-09-15/16，B 机本 shell，60 分钟盒）：
+  **切分提交**：起点 `c2b06a5` 堆着 P8/P9/P10/M3/P6 五批在途改动，按任务文件清单切为
+  `f1a9b25`（P8 降级链 + 三链计数 + keyring fallback + 降级页接线，17 文件）→
+  `8f72fdc`（P9 导出/CLI，10 文件）→ `8452795`（P10 高亮/SCK，7 文件）→
+  `fed3264`（M3 验收 + P12 增补记§8，3 文件）→ P6（本条，标定 + 全文 PROGRESS + memory）。
+  交错文件按主导方归属整文件落，carry-over 明细见各提交 message 第二段：
+  `router.py`→P6（含 P8 降级段 + P10 高亮段）；`Search.tsx`→P10（含 P8 标注段）；
+  `qa.ts/liveqa.ts`→P8（含 P10 hl 类型行）；`Settings.tsx/api-contract.md/benchmark.md`→P8
+  （含 P5 embedding + P7 autostart/capture 遗留 hunk，P5/P7 已提交）；`PROGRESS.md` 全文→P6；
+  `test_answer_router/test_llm_providers`→P6（含 P8 形参跟进）；P8/P10 新测试文件内 P6
+  band_s 跟进随创建提交落；`research-sck/eval_calibrate` 分随 P10/P6；`.gitignore` 凭据段→M3。
+  不强求中间提交单步可构建，HEAD 全绿为准。
+  **三件套实测**：`vitest` **167 passed / 12 files**（per-file：trigger 50 / liveqa 30 /
+  capture 28 / importFlow 15 / api 7 / ReviewPanel 6 / EmbeddingConfig 6 / ColumnMapping 5 /
+  Knowledge 4 / windowView 4 / sse 4 / highlight 8；原预期 159+6+1 作废，highlight 实测 8）；
+  `tsc --noEmit` **0**（初跑 2 错误，P5 遗留 `useEmbedding` 首参误写，已修）；
+  `eslint` **0**；`pytest` **396 passed / 1 skipped**。数字已回写测试计数台账§1 与 M3 §8。
+  **PRD 裁定**：`git grep F4.5/F11.6` 仓内无定义（README 证 PRD 待落仓）→ M3 row7 按代码事实
+  勘误为双格式（JSON/MD），若 PRD 回仓确有三格式导出要求则开新项（M3 §8.4）。
+  **1b-HK**：`dist-sidecar` 仍旧包（批量删除守卫，挂账）；CI 已全 job 配 3.11，
+  本地 py311 无 pytest 未实测（挂账）。M3 §8.5 留痕。

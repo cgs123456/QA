@@ -491,7 +491,7 @@ async def test_four_direct_no_llm(name, demo_db2):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("name", ["claude", "gemini", "groq"])
-async def test_four_maybe_llm(name, db, monkeypatch):
+async def test_four_maybe_llm(name, db, monkeypatch, maybe_s):
     """maybe 档：LLM 被调用一次，流文本为“甲”。"""
     import generation.router as router_mod
 
@@ -502,12 +502,12 @@ async def test_four_maybe_llm(name, db, monkeypatch):
     monkeypatch.setattr(router_mod, "field_lookup", lambda *a, **k: [])
     monkeypatch.setattr(
         router_mod, "fts5_search",
-        lambda *a, **k: [_hit("a", "标准答案甲。", 0.9, "jieba"),
-                         _hit("a", "标准答案甲。", 0.9, "simple")],
+        lambda *a, **k: [_hit("a", "标准答案甲。", maybe_s, "jieba"),
+                         _hit("a", "标准答案甲。", maybe_s, "simple")],
     )
     monkeypatch.setattr(
         router_mod, "vector_search",
-        lambda *a, **k: [dict(_hit("a", "标准答案甲。", 0.9, "vec"))],
+        lambda *a, **k: [dict(_hit("a", "标准答案甲。", maybe_s, "vec"))],
     )
     llm, _ = _make_provider(name, _ok_handler(name))
     result = await router_mod.answer(db, "s", "测试问题", llm, _zeros)
@@ -539,7 +539,7 @@ async def test_four_fail_closed_no_llm(name, demo_db2):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("name", ["claude", "gemini", "groq"])
-async def test_four_error_path(name, db, monkeypatch):
+async def test_four_error_path(name, db, monkeypatch, maybe_s):
     """error 档：LLM 429 → rate_limited，走 error 路径（llm_calls=1）。"""
     import generation.router as router_mod
 
@@ -550,12 +550,12 @@ async def test_four_error_path(name, db, monkeypatch):
     monkeypatch.setattr(router_mod, "field_lookup", lambda *a, **k: [])
     monkeypatch.setattr(
         router_mod, "fts5_search",
-        lambda *a, **k: [_hit("a", "标准答案甲。", 0.9, "jieba"),
-                         _hit("a", "标准答案甲。", 0.9, "simple")],
+        lambda *a, **k: [_hit("a", "标准答案甲。", maybe_s, "jieba"),
+                         _hit("a", "标准答案甲。", maybe_s, "simple")],
     )
     monkeypatch.setattr(
         router_mod, "vector_search",
-        lambda *a, **k: [dict(_hit("a", "标准答案甲。", 0.9, "vec"))],
+        lambda *a, **k: [dict(_hit("a", "标准答案甲。", maybe_s, "vec"))],
     )
     llm, _ = _make_provider(name, _err_handler(429))
     result = await router_mod.answer(db, "s", "测试问题", llm, _zeros)
