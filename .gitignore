@@ -54,6 +54,18 @@ sidecar/tests/audio_samples/*.wav
 sidecar/tests/audio_samples/*.json
 !sidecar/tests/audio_samples/manifest.json
 
+# 密钥与凭据：绝不入库。
+# 此前 .gitignore 完全没有这一类覆盖 —— key 一旦被写进文件就有被提交的风险。
+# 运行时凭据的正路是 keychain（Rust `keyring` crate）+ sidecar 内存（core/secrets.py），
+# 不落盘；这里只是兜底，防止临时文件被误提交。
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials*.json
+
 # Local runtime
 *.db
 *.db-wal

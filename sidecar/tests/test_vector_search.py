@@ -59,14 +59,15 @@ def test_rejected_excluded(db):
 
 def test_threshold_boundary(db):
     sid = _seed(db)
-    # cos=0.7 → d≈0.775（外，v1 不得出现）；cos=0.9 → d≈0.447（内，保留并验 s）。
+    # P6 标定后 DIST_CUTOFF=0.8：cos=0.65 → d≈0.84（外，v1 不得出现）；
+    # cos=0.9 → d≈0.447（内，保留并验 s）。
     def qvec(cos):
         sin = math.sqrt(max(0.0, 1 - cos * cos))
         v = [0.0] * 512
         v[0], v[1] = cos, sin
         return sqlite_vec.serialize_float32(v)
 
-    assert all(h["qa_id"] != "v1" for h in vector_search(db, sid, qvec(0.7)))
+    assert all(h["qa_id"] != "v1" for h in vector_search(db, sid, qvec(0.65)))
     inside = [h for h in vector_search(db, sid, qvec(0.9)) if h["qa_id"] == "v1"]
     assert inside and inside[0]["distance"] < DIST_CUTOFF
     assert abs(inside[0]["s"] - (1 - inside[0]["distance"] / 2)) < 1e-9
