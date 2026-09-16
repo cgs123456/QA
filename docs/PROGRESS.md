@@ -1985,6 +1985,19 @@ highlight 8 = **167**。
   **文件清单**：`src/lib/sessions.ts` 等 13 个新文件 + `src/lib/api.ts` 等 6 个既有改动、
   `docs/PROGRESS.md`。
 
+- **`pytest` / `build-tauri` 长期红的真因（同日）：CI 的 Python 版本太旧**：
+  两个 job 都卡在 `pip install -r sidecar/requirements-lock.txt`。逐包查 PyPI 的
+  `requires_python` 后定位到 **`numpy==2.5.3` 要求 Python >=3.12**（只发 cp312/cp313 wheel），
+  而 CI 的 `PYTHON_VERSION` 是 **3.11** → `No matching distribution found`。
+  锁文件是本机 3.13 环境 freeze 出来的，CI 没跟上。
+  **修**：CI 的 `PYTHON_VERSION` 改 **3.13**（与本机开发/打包一致）；锁文件头注明的
+  "Python 3.11+" 改成 "3.12+" 并写明原因。
+  先验证过 3.13 上装得齐：`av==18.1.0` 与 `tokenizers==0.23.2` 是 **abi3 wheel**
+  （`cp311-abi3` / `cp310-abi3`），3.13 可用；`ctranslate2` / `onnxruntime` /
+  `pydantic_core` / `sherpa-onnx` / `regex` / `websockets` 都有 cp313 wheel。
+  **不是**降 numpy —— 那会和本机环境越走越远。
+  **文件清单**：`.github/workflows/ci.yml`、`sidecar/requirements-lock.txt`、`docs/PROGRESS.md`。
+
 - **清掉 vitest 的 4 例红灯（非 S8，但挡着 CI）**：
   - `src/pages/Knowledge.test.tsx`（4 例）：`Knowledge` 页会调 `useTemplates()`，
     没 mock 也没 `QueryClientProvider` → `useQuery` 直接抛错。按本文件既有风格**补 mock**

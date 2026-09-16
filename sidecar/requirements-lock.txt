@@ -1,5 +1,9 @@
-# InterviewCopilot sidecar dependency lock (clean venv, pip freeze; Python 3.11+)
+# InterviewCopilot sidecar dependency lock (clean venv, pip freeze; Python 3.12+)
 # Install: pip install -r sidecar/requirements-lock.txt
+#
+# **最低 Python 3.12**：numpy==2.5.3 起只提供 cp312/cp313 wheel（requires_python>=3.12），
+# 用 3.11 装会直接 "No matching distribution found for numpy==2.5.3"。
+# 本机开发/打包用 3.13，CI 的 PYTHON_VERSION 已对齐（见 .github/workflows/ci.yml）。
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
