@@ -1962,6 +1962,29 @@ highlight 8 = **167**。
   **文件清单**：`.github/workflows/ci.yml`、`src/lib/sessions.test.ts`、
   `src/components/CompanionPanel.test.tsx`、`docs/PROGRESS.md`。
 
+- **「本地绿 CI 红」的真因：工作树里有没入库的文件（同日，run #13~#15）**：
+  上一条以为 `?raw` 缺扩展名 → 改完 CI 仍报 `ENOENT ... open './sessions.ts'`。
+  **真因是 `src/lib/sessions.ts` 等 13 个文件从未 `git add` 过**（S12 会话账 / S7 模板 /
+  Rehearsal 的产物，一直躺在工作树里）。本地有文件所以 262/262 全绿，CI 是全新 checkout
+  → 文件不存在。**改路径写法是白改，得把文件提交进去**。
+  - 第二轮：补完文件后 vitest 改报 `Module '"../lib/api"' has no exported member
+    'PurgeResult' / 'TemplateSummary' / 'SessionEvent' …` —— 同一类病：
+    **这些导出只存在于工作树里的 `src/lib/api.ts`**，HEAD 上还是旧版。
+    又把 `src/lib/api.ts`、`capture.ts(+test)`、`Settings.tsx`、`App.css`、`vite-env.d.ts` 一并入库。
+  - **教训（已写进项目记忆）**：报错说"找不到某文件/某导出"时，先用
+    `git ls-files --error-unmatch <文件>` 确认它**在不在仓库里**，再怀疑路径写法。
+- **CI 现状（run #15 / d25ee96）**：
+  | job | 结果 | 说明 |
+  |---|---|---|
+  | `lint`（含 clippy） | **success** | 补 `libasound2-dev libgtk-3-dev` 后转绿（ALSA 假设正确） |
+  | `rust-test`（伴侣 28 例） | **success** | **真实局域网那 3 例在 ubuntu runner 上也过** |
+  | `vitest` | **success** | 262 例，tsc 也过 |
+  | `rust-test-lib`（`--lib` 163 例） | failure（已挂 `continue-on-error`） | Linux 上 exit 101，日志拿不到（需 GitHub 认证；WSL 被安全策略拦），**待有 Linux 环境定位** |
+  | `pytest` | failure（**既有**） | 卡在 `pip install -r sidecar/requirements-lock.txt`，run #10 就红 |
+  | `build-tauri (ubuntu)` | failure（**既有**） | 同上 |
+  **文件清单**：`src/lib/sessions.ts` 等 13 个新文件 + `src/lib/api.ts` 等 6 个既有改动、
+  `docs/PROGRESS.md`。
+
 - **清掉 vitest 的 4 例红灯（非 S8，但挡着 CI）**：
   - `src/pages/Knowledge.test.tsx`（4 例）：`Knowledge` 页会调 `useTemplates()`，
     没 mock 也没 `QueryClientProvider` → `useQuery` 直接抛错。按本文件既有风格**补 mock**
