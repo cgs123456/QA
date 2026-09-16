@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   EMPTY_CAPTURE_STATE,
+  EMPTY_SESSION_STATS,
   captureSummary,
   diagnosticsRows,
   formatNativeFormat,
@@ -17,10 +18,13 @@ import {
   pathStatusLabel,
   rateVerdict,
   selfCheckSummary,
+  sessionBadge,
+  sessionRows,
   sidecarCaptureSummary,
   type CaptureState,
   type PathSnapshot,
   type SelfCheck,
+  type SessionStats,
 } from "./capture";
 
 // ------------------------------------------------------------------ 夹具
@@ -88,9 +92,67 @@ function path(over: Partial<PathSnapshot> = {}): PathSnapshot {
   };
 }
 
-function state(over: Partial<CaptureState> = {}): CaptureState {
-  return { running: true, last_error: null, paths: [path()], ...over };
+function session(over: Partial<SessionStats> = {}): SessionStats {
+  return { ...EMPTY_SESSION_STATS, ...over };
 }
+
+function state(over: Partial<CaptureState> = {}): CaptureState {
+  return { running: true, last_error: null, paths: [path()], session: session(), ...over };
+}
+
+// ------------------------------------------------------------------ 会话标识（S2）
+
+describe("sessionBadge", () => {
+  it("会话开着时给出常驻的「录制中 + 会话 id」", () => {
+    const s = sessionBadge(session({ state: "open", session_id: "ses_0001" }));
+    expect(s).toContain("录制中");
+    expect(s).toContain("ses_0001");
+  });
+
+  it("建立中与未录制是两种不同的说法（不糊成一句「未录制」）", () => {
+    expect(sessionBadge(session({ state: "opening" }))).toBe("◌ 会话建立中");
+    expect(sessionBadge(session())).toBe("○ 未录制");
+  });
+
+  it("降级要说出来：采集在跑但会话没开成，用户必须看得出来", () => {
+    const s = sessionBadge(session({ begin_misses: 2 }));
+    expect(s).toContain("未录制");
+    expect(s).toContain("降级 2 次");
+  });
+
+  it("空状态渲染成「未录制」而不是空串（常驻标识不能是空白）", () => {
+    expect(sessionBadge(EMPTY_SESSION_STATS)).not.toBe("");
+  });
+});
+
+describe("sessionRows", () => {
+  it("恒显示会话状态与会话 id（零值本身是信息）", () => {
+    const rows = sessionRows(EMPTY_SESSION_STATS);
+    expect(rows.map(([k]) => k)).toEqual(["会话状态", "会话 id"]);
+    expect(rows[1][1]).toBe("（无）");
+  });
+
+  it("会话开着时状态行说「已开」", () => {
+    const rows = sessionRows(session({ state: "open", session_id: "ses_0009" }));
+    expect(rows[0][1]).toBe("已开");
+    expect(rows[1][1]).toBe("ses_0009");
+  });
+
+  it("异常计数（降级/迟到拒收/幂等）只在非 0 时追加", () => {
+    const quiet = sessionRows(session()).map(([k]) => k);
+    for (const k of ["会话建立降级", "会话关闭降级", "迟到回执已拒收"]) {
+      expect(quiet).not.toContain(k);
+    }
+    const loud = sessionRows(
+      session({ begin_misses: 1, end_misses: 2, stale_results_rejected: 3, begin_duplicate: 4 }),
+    );
+    const keys = loud.map(([k]) => k);
+    expect(keys).toContain("会话建立降级");
+    expect(keys).toContain("会话关闭降级");
+    expect(keys).toContain("迟到回执已拒收");
+    expect(keys).toContain("重复 begin（已幂等合并）");
+  });
+});
 
 // ------------------------------------------------------------------ 自检摘要
 
@@ -177,6 +239,19 @@ describe("pathStatusLabel", () => {
     expect(pathStatusLabel(path({ running: false }))).toBe("已停止");
     expect(pathStatusLabel(path({ self_check: selfCheck({ status: "pending" }) }))).toBe("自检中");
     expect(pathStatusLabel(path())).toBe("采集中");
+  });
+});
+
+describe("sessionBadge 的三种「没在录」要说清是哪种", () => {
+  it("录制开关关着 ≠ 降级（诊断面板必须能区分）", () => {
+    const off = sessionBadge(session({ disabled_skips: 2 }));
+    expect(off).toContain("未录制");
+    expect(off).toContain("未开启");
+    expect(off).not.toContain("降级");
+
+    const degraded = sessionBadge(session({ begin_misses: 1 }));
+    expect(degraded).toContain("降级");
+    expect(degraded).not.toContain("未开启");
   });
 });
 

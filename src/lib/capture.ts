@@ -124,6 +124,40 @@ export type CaptureState = {
    * 判断"现在有没有在采"只看 `running`，不要看 `paths` 是否为空。
    */
   paths: PathSnapshot[];
+  /**
+   * 会话边界（S2）。采集开 = 会话开，采集停 = 会话关；会话账
+   * （`session_events`）里的 `asr_final` / `qa_exchange` 都挂在这条边界的
+   * 里面。**停完仍在**（与 `paths` 同理）：按完停止最该看的就是刚才那次
+   * 会话有没有开成、有没有降级。
+   */
+  session: SessionStats;
+};
+
+export type SessionState = "idle" | "opening" | "open";
+
+/** 镜像 Rust `audio::session::SessionStats`（字段名是契约，改名两边一起改）。 */
+export type SessionStats = {
+  state: SessionState;
+  /** 当前会话 id；`null` = 没有会话。 */
+  session_id: string | null;
+  /** 幂等命中次数（重复 begin 被合并，不是错误）。 */
+  begin_duplicate: number;
+  /** begin 降级次数（sidecar HTTP 面不可达 / 被拒）。 */
+  begin_misses: number;
+  /** end 降级次数。 */
+  end_misses: number;
+  sessions_opened: number;
+  sessions_closed: number;
+  /** 停止时本来就没有会话（对端懒发 end 的次数）。 */
+  end_without_session: number;
+  /**
+   * **录制开关关着**导致没开成会话的次数（S4 门禁）。
+   * 与 `begin_misses` 的区别：那是"想记没记成"（降级），
+   * 这是"按设置不记"（正常）。诊断面板必须能区分。
+   */
+  disabled_skips: number;
+  /** 迟到回执被拒次数（停止之后到达的"会话已开"）。 */
+  stale_results_rejected: number;
 };
 
 /** sidecar `/diagnostics/audio` 的 `capture` 段（它看得见的那部分采集状态）。 */
@@ -135,7 +169,25 @@ export type SidecarCapture = {
 };
 
 /** 服务停着时的空状态：`get_capture_state` 未启动会返回它。 */
-export const EMPTY_CAPTURE_STATE: CaptureState = { running: false, last_error: null, paths: [] };
+export const EMPTY_SESSION_STATS: SessionStats = {
+  state: "idle",
+  session_id: null,
+  begin_duplicate: 0,
+  begin_misses: 0,
+  end_misses: 0,
+  sessions_opened: 0,
+  sessions_closed: 0,
+  end_without_session: 0,
+  disabled_skips: 0,
+  stale_results_rejected: 0,
+};
+
+export const EMPTY_CAPTURE_STATE: CaptureState = {
+  running: false,
+  last_error: null,
+  paths: [],
+  session: EMPTY_SESSION_STATS,
+};
 
 // ------------------------------------------------------------------ 命令
 
@@ -240,6 +292,51 @@ export function captureSummary(state: CaptureState): string {
   }
   const pending = state.paths.some((p) => p.self_check.status === "pending");
   return pending ? "采集中（自检中）" : "采集中";
+}
+
+/**
+ * 采集状态行上的**常驻**会话标识（S2）。
+ *
+ * 「常驻」是这一行存在的全部理由：录制中这件事必须在状态行上**一直看得见**
+ * （不是弹一次就消失的提示），而"没在录"同样要看得见 —— 用户需要能一眼
+ * 分辨"采集在跑但会话没开成"（= 这段音频不在任何会话账里）这种半坏状态。
+ *
+ * 与 Rust `SessionStats::badge()` 各算一遍是**有意的**（同 [`rateVerdict`]）：
+ * Rust 那份给日志与 E2E 看，这份决定 UI 措辞；不一致时最多是措辞不同，
+ * 不会出现"UI 说在录、Rust 说没会话"。
+ */
+export function sessionBadge(s: SessionStats): string {
+  if (s.state === "open") return `● 录制中 · 会话 ${s.session_id ?? "?"}`;
+  if (s.state === "opening") return "◌ 会话建立中";
+  // 录制开关关着（S4 门禁）与真降级是两回事：一个是用户的选择，一个是故障。
+  // 诊断面板靠这两句话区分，别糊成一句"没在录"。
+  if (s.disabled_skips > 0 && s.begin_misses === 0) {
+    return "○ 未录制（会话录制未开启）";
+  }
+  if (s.begin_misses > 0) return `○ 未录制（会话边界降级 ${s.begin_misses} 次）`;
+  return "○ 未录制";
+}
+
+/**
+ * 会话诊断行（设置页）。
+ *
+ * 与 [`diagnosticsRows`] 的分工：那边是**每路**的采集计数，这里是**一次会话**
+ * 的边界账。`会话状态` / `会话 id` 恒显示（零值本身就是信息，见那边的注释）；
+ * 降级与迟到拒收只在非 0 时追加 —— 它们正常时都是 0，出现即值得看。
+ */
+export function sessionRows(s: SessionStats): [string, string][] {
+  const rows: [string, string][] = [
+    ["会话状态", s.state === "open" ? "已开" : s.state === "opening" ? "建立中" : "未开"],
+    ["会话 id", s.session_id ?? "（无）"],
+  ];
+  if (s.begin_misses > 0) rows.push(["会话建立降级", String(s.begin_misses)]);
+  if (s.end_misses > 0) rows.push(["会话关闭降级", String(s.end_misses)]);
+  if (s.begin_duplicate > 0) rows.push(["重复 begin（已幂等合并）", String(s.begin_duplicate)]);
+  if (s.end_without_session > 0) rows.push(["无会话时的停止", String(s.end_without_session)]);
+  if (s.stale_results_rejected > 0) {
+    rows.push(["迟到回执已拒收", String(s.stale_results_rejected)]);
+  }
+  return rows;
 }
 
 /**

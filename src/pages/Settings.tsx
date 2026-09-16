@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ApiError, apiGet, apiPost, apiPut } from "../lib/api";
 import { EmbeddingConfig } from "../components/EmbeddingConfig";
+import { SessionRecording } from "../components/SessionRecording";
 import { useEmbeddingProvider, useRebuildStatus, useSwitchEmbedding } from "../hooks/useEmbedding";
 import {
   EVT_CAPTURE_STATE,
@@ -11,6 +12,8 @@ import {
   pathLabel,
   pathStatusLabel,
   selfCheckSummary,
+  sessionBadge,
+  sessionRows,
   sidecarCaptureSummary,
   type CaptureState,
   type SidecarCapture,
@@ -637,6 +640,9 @@ export function Settings() {
         )}
       </div>
 
+      {/* S4 会话录制：开关 / 保留策略 / 清除 / 数据量（隐私相关，单独成区） */}
+      <SessionRecording />
+
       {/* 采集自检（Rust 侧真值）：开流 500ms 探测的设备/格式/实际帧率 */}
       <div>
         <h3>采集自检（Rust 侧）</h3>
@@ -652,6 +658,16 @@ export function Settings() {
               {capture.running ? "采集中" : "未采集"}
               {capture.last_error != null && ` · 异常：${capture.last_error}`}
             </p>
+            {/* S2：会话边界（常驻标识 + 逐项计数），与每路诊断摆在一起 —— */}
+            {/* 「采集在跑但会话没开成」正是靠这两行并列才看得出来。 */}
+            <p data-testid="capture-diag-session">{sessionBadge(capture.session)}</p>
+            <ul data-testid="capture-diag-session-rows">
+              {sessionRows(capture.session).map(([k, v]) => (
+                <li key={k}>
+                  {k}：{v}
+                </li>
+              ))}
+            </ul>
             {capture.paths.length === 0 ? (
               <p data-testid="capture-diag-empty">尚未启动过采集（按 F1.6 或到「实时提词」开一次）。</p>
             ) : (
