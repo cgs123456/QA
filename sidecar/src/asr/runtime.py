@@ -21,6 +21,8 @@
 直接抛 `unavailable`，不给“开了却跑不动”的半吊子状态。
 """
 
+from diagnostics.degrade import asr_on_degrade
+
 from .catalog import DEFAULT_PROVIDER, ASRSwitchboard
 from .provider import ERR_UNAVAILABLE, ASRError
 
@@ -35,10 +37,14 @@ _CUDA_PROBE: bool | None = None
 
 
 def get_switchboard() -> ASRSwitchboard:
-    """进程级实例（懒构造，带默认降级链）。"""
+    """进程级实例（懒构造，带默认降级链）。
+
+    降级事件经 `asr_on_degrade` 进统一诊断计数（P8；内容无关 R14）。
+    `describe()` 形状不变。
+    """
     global _SWITCHBOARD
     if _SWITCHBOARD is None:
-        _SWITCHBOARD = ASRSwitchboard(DEFAULT_PROVIDER)
+        _SWITCHBOARD = ASRSwitchboard(DEFAULT_PROVIDER, on_degrade=asr_on_degrade)
     return _SWITCHBOARD
 
 

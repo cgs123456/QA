@@ -17,9 +17,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from database.connection import get_connection
+from diagnostics.degrade import llm_on_degrade
+from diagnostics.degrade import record as record_degrade
 from generation.provider import ProviderError, get_provider
 from generation.router import answer_stream
 from knowledge import stores
+from retrieval.embedding import get_active as active_embedding
 
 router = APIRouter()
 
@@ -31,43 +34,64 @@ def _conn():
     return get_connection()
 
 
-def _get_llm(provider_name: str | None):
-    """LLM provider（测试 monkeypatch 注入假 provider）。"""
-    return get_provider((provider_name or "ollama").strip().lower())
+def _get_llm(provider_name: str | None, fallbacks=()):
+    """LLM 降级链（测试 monkeypatch 注入假 provider）。
+
+    无备选时行为与今日单 provider 一字不差（同一对象、同一计数）；
+    有备选时包一层 `FallbackLLMProvider`（首选严格构造，备选懒构造、
+    坏备选记 config 跳过）。降级事件进统一诊断计数。
+    """
+    from generation.fallback import build_chain
+
+    return build_chain((provider_name or "ollama").strip().lower(),
+                       fallbacks or (), on_degrade=llm_on_degrade)
 
 
 _embedder = None
 
 
 def _get_embedder():
-    """本地 embedding 单例（测试 monkeypatch 注入）。缺模型即 loudly 失败，
-    由后台任务转为 error 事件（不断 worker）。"""
-    global _embedder
-    if _embedder is None:
-        from models.registry import BGE_SMALL_ZH, default_model_dir
-        from retrieval.embedder import Embedder
+    """当前生效 embedding provider（测试 monkeypatch 注入）。
 
-        model_dir = default_model_dir(BGE_SMALL_ZH)
-        if not (model_dir / "model.onnx").is_file():
-            raise RuntimeError("本地 embedding 模型缺失")
-        _embedder = Embedder(model_dir)
-    return _embedder
+    local：沿用本地单例（缺模型即 loudly 失败，由后台任务转为 error 事件，
+    不断 worker；行为与 task15 逐字一致）。cloud：每次现构造（读当前内存 key，
+    key 轮换不拿过期值），缺 key/不可达即抛，answer_stream 降级为 vec=[]
+    + warnings，不断全链路。
+    """
+    from retrieval.embedding import PROVIDER_LOCAL, build_embedding_provider, get_active
+
+    if get_active() == PROVIDER_LOCAL:
+        global _embedder
+        if _embedder is None:
+            from models.registry import BGE_SMALL_ZH, default_model_dir
+            from retrieval.embedder import Embedder
+
+            model_dir = default_model_dir(BGE_SMALL_ZH)
+            if not (model_dir / "model.onnx").is_file():
+                raise RuntimeError("本地 embedding 模型缺失")
+            _embedder = Embedder(model_dir)
+        return _embedder
+    return build_embedding_provider("cloud")
 
 
 class AskBody(BaseModel):
     question: str
     store_id: str | None = None
     provider: str | None = None
+    # P8 降级链：首选 provider 失败（超时/限流/401）时按序尝试的备选序列。
+    # 省略即单 provider（今日行为）；Fail-Closed 分支在链之前返回，不参与降级。
+    fallbacks: list[str] | None = None
 
 
 class _Task:
-    __slots__ = ("question", "store_id", "provider", "created",
+    __slots__ = ("question", "store_id", "provider", "fallbacks", "created",
                  "queue", "bg", "finished")
 
-    def __init__(self, question, store_id, provider):
+    def __init__(self, question, store_id, provider, fallbacks=()):
         self.question = question
         self.store_id = store_id
         self.provider = provider
+        self.fallbacks = tuple(fallbacks or ())
         self.created = time.monotonic()
         self.queue: asyncio.Queue = asyncio.Queue()
         self.bg: asyncio.Task | None = None
@@ -111,7 +135,7 @@ async def _run_task(task_id: str) -> None:
         return
     try:
         try:
-            llm = _get_llm(task.provider)
+            llm = _get_llm(task.provider, task.fallbacks)
         except (ValueError, ProviderError) as e:
             await task.queue.put({"type": "done", "result": {
                 "type": "error", "text": "答案生成失败，请稍后重试。",
@@ -126,7 +150,13 @@ async def _run_task(task_id: str) -> None:
         def _embed_fn(texts):
             # 延迟到真正需要时构造 embedder；缺模型时抛错，
             # 由 answer_stream 降级为 vec=[] + warnings（不断全链路）。
-            return _get_embedder().embed(texts)
+            # 向量故障同时进统一诊断计数（P8 三链之一；种类名，无文本）。
+            try:
+                return _get_embedder().embed(texts)
+            except Exception as e:  # noqa: BLE001 — 记录后原样上抛，走既有降级
+                record_degrade("embedding", active_embedding(),
+                               getattr(e, "kind", type(e).__name__))
+                raise
 
         async for event in answer_stream(
             _conn(), task.store_id, task.question, llm, _embed_fn
@@ -194,7 +224,7 @@ async def qa_ask(body: AskBody):
         if store_id is None:
             raise HTTPException(status_code=400, detail="无当前知识库")
     task_id = secrets.token_urlsafe(16)
-    task = _Task(question, store_id, body.provider)
+    task = _Task(question, store_id, body.provider, body.fallbacks)
     await _sweep_tasks()
     async with TASKS_LOCK:
         TASKS[task_id] = task

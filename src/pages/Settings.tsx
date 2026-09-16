@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ApiError, apiGet, apiPost, apiPut } from "../lib/api";
+import { EmbeddingConfig } from "../components/EmbeddingConfig";
+import { useEmbeddingProvider, useRebuildStatus, useSwitchEmbedding } from "../hooks/useEmbedding";
 import {
   EVT_CAPTURE_STATE,
   diagnosticsRows,
@@ -58,6 +60,25 @@ type AudioDiagnostics = {
   capture: SidecarCapture;
 };
 
+type DegradeChain = { total: number; by_kind: Record<string, number>; by_provider: Record<string, number> };
+
+type DegradeDiagnostics = {
+  chains: { asr: DegradeChain; llm: DegradeChain; embedding: DegradeChain };
+};
+
+/**
+ * taskP7：开机自启开关。
+ *
+ * `available=false` 表示**这次读数不可信**（插件没就绪 / 平台不支持 / 读写失败），
+ * 而不是「已关闭」—— 所以它只用来加警告样式，**不用来禁用输入**：
+ * 禁用了用户连重试都做不到。
+ */
+type AutostartState = {
+  enabled: boolean;
+  available: boolean;
+  note: string;
+};
+
 function formatBytes(n: number | null): string {
   if (n == null || n < 0) return "?";
   return `${(n / 1048576).toFixed(1)} MiB`;
@@ -101,21 +122,44 @@ export function Settings() {
   const [latencyMessage, setLatencyMessage] = useState<string | null>(null);
   const [latencyBusy, setLatencyBusy] = useState(false);
 
+  // ---- 向量检索（F5.3/F6.5 双 embedding：切换起后台重建，完成后原子生效） ----
+  const embQuery = useEmbeddingProvider();
+  const switchEmb = useSwitchEmbedding();
+  const [embMessage, setEmbMessage] = useState<string | null>(null);
+  const [embSwitchError, setEmbSwitchError] = useState<string | null>(null);
+  const embRebuildingId = embQuery.data?.rebuilding?.rebuild_id ?? null;
+  const embRebuildQuery = useRebuildStatus(embRebuildingId, embRebuildingId != null);
+
   // ---- 音频诊断（task19：最近一次 WS 连接计数 + 限额；设备名待 Rust 接线） ----
   const [diag, setDiag] = useState<AudioDiagnostics | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
+
+  // ---- 降级计数（P8：ASR/LLM/embedding 三链统一，纯计数 R14） ----
+  const [degrade, setDegrade] = useState<DegradeDiagnostics | null>(null);
+  const [degradeError, setDegradeError] = useState<string | null>(null);
 
   // ---- 采集自检（M2-7：Rust 侧真值；开流 500ms 探测的格式/权限/帧率） ----
   const [capture, setCapture] = useState<CaptureState | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
 
+  // ---- 开机自启（taskP7：tauri-plugin-autostart） ----
+  const [autostart, setAutostart] = useState<AutostartState | null>(null);
+  const [autostartBusy, setAutostartBusy] = useState(false);
+
   async function refreshDiag() {
     setDiagError(null);
+    setDegradeError(null);
     setCaptureError(null);
     try {
       setDiag(await apiGet<AudioDiagnostics>("/diagnostics/audio"));
     } catch (err) {
       setDiagError(String(err));
+    }
+    // 降级计数独立拉取：音频诊断挂了也不影响降级计数可见。
+    try {
+      setDegrade(await apiGet<DegradeDiagnostics>("/diagnostics/degrade"));
+    } catch (err) {
+      setDegradeError(String(err));
     }
     // 采集状态是本地命令，与 sidecar 端点分开 catch：sidecar 挂了也要能看采集诊断。
     try {
@@ -171,6 +215,17 @@ export function Settings() {
       .catch((err) => {
         if (!cancelled) setDiagError(String(err));
       });
+    apiGet<DegradeDiagnostics>("/diagnostics/degrade")
+      .then((d) => {
+        if (!cancelled) setDegrade(d);
+      })
+      .catch((err) => {
+        // 旧 sidecar 无此端点：降级计数区隐藏（404 即老版本）。
+        if (!cancelled) {
+          if (err instanceof ApiError && err.status === 404) setDegrade(null);
+          else setDegradeError(String(err));
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -203,6 +258,34 @@ export function Settings() {
       unlisten?.();
     };
   }, []);
+
+  // 开机自启：拉一次当前状态。命令读不到（非 Tauri 环境）就整块隐藏，
+  // 而不是画一个点了没反应的开关。
+  useEffect(() => {
+    let cancelled = false;
+    invoke<AutostartState>("get_autostart")
+      .then((st) => {
+        if (!cancelled) setAutostart(st);
+      })
+      .catch(() => {
+        if (!cancelled) setAutostart(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function setAutostartEnabled(enabled: boolean) {
+    setAutostartBusy(true);
+    try {
+      // 写失败不致命：Rust 侧把原因原样放回 note（应用其余功能照常）。
+      setAutostart(await invoke<AutostartState>("set_autostart", { enabled }));
+    } catch (e) {
+      setAutostart((s) => (s == null ? s : { ...s, available: false, note: `设置失败：${String(e)}` }));
+    } finally {
+      setAutostartBusy(false);
+    }
+  }
 
   async function saveKey(e: React.FormEvent) {
     e.preventDefault();
@@ -246,6 +329,36 @@ export function Settings() {
       }
     } finally {
       setSwitching(false);
+    }
+  }
+
+  /** 409 响应体里的服务端 message（`{"detail":{"error","message"}}`），取不到则回退原文。 */
+  function embErrorText(err: unknown): string {
+    if (err instanceof ApiError && typeof err.payload === "object" && err.payload != null) {
+      const detail = (err.payload as { detail?: unknown }).detail as
+        | { message?: unknown }
+        | undefined;
+      if (typeof detail?.message === "string" && detail.message !== "") return detail.message;
+    }
+    return String(err);
+  }
+
+  async function switchEmbedding(name: string) {
+    if (embQuery.data != null && name === embQuery.data.active) return;
+    setEmbMessage(null);
+    setEmbSwitchError(null);
+    try {
+      // 切换只建后台重建任务（可达校验在服务端做）；完成前检索仍走旧表，不断链。
+      const res = await switchEmb.mutateAsync(name);
+      if (res.rebuilding == null) {
+        setEmbMessage(`已是 ${res.active}，无需切换。`);
+      } else {
+        setEmbMessage(
+          `已开始重建（${res.rebuilding.from} → ${res.rebuilding.to}），完成后自动切换；期间检索不受影响。`,
+        );
+      }
+    } catch (err) {
+      setEmbSwitchError(embErrorText(err));
     }
   }
 
@@ -436,6 +549,37 @@ export function Settings() {
         )}
       </div>
 
+      <EmbeddingConfig
+        state={embQuery.data ?? null}
+        loadError={embQuery.isError ? String(embQuery.error) : null}
+        switching={switchEmb.isPending}
+        switchError={embSwitchError}
+        rebuild={embRebuildQuery.data ?? null}
+        message={embMessage}
+        onSwitch={(name) => void switchEmbedding(name)}
+      />
+
+      {/* taskP7：开机自启。Rust 侧启动时不注册自启，注册只发生在这里的写入，
+          所以写失败不会拦住应用启动，只会显示在下面这句话里。 */}
+      {autostart != null && (
+        <div>
+          <h3>开机自启</h3>
+          <label>
+            <input
+              data-testid="autostart-toggle"
+              type="checkbox"
+              checked={autostart.enabled}
+              disabled={autostartBusy}
+              onChange={(e) => void setAutostartEnabled(e.currentTarget.checked)}
+            />
+            开机时自动启动 InterviewCopilot
+          </label>
+          <p data-testid="autostart-note" className={autostart.available ? undefined : "warn"}>
+            {autostart.note}
+          </p>
+        </div>
+      )}
+
       <div>
         <h3>模型下载（bge-small-zh-v1.5）</h3>
         <button data-testid="model-download" type="button" onClick={() => void startDownload(BGE_MODEL)}>
@@ -474,6 +618,22 @@ export function Settings() {
               sidecar 侧：{sidecarCaptureSummary(diag.capture)}
             </p>
           </>
+        )}
+      </div>
+
+      <div>
+        <h3>降级计数（三链统一，内容无关）</h3>
+        {degradeError != null && <p>降级计数加载失败：{degradeError}</p>}
+        {degrade == null && degradeError == null && <p>加载中…</p>}
+        {degrade != null && (
+          <ul data-testid="degrade-counters">
+            {(["asr", "llm", "embedding"] as const).map((chain) => (
+              <li key={chain}>
+                {chain}：{degrade.chains[chain].total}
+                {Object.entries(degrade.chains[chain].by_kind).map(([k, v]) => ` ${k}×${v}`)}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 

@@ -43,7 +43,7 @@ export function useEmbeddingProvider() {
   return useQuery({
     queryKey: ["embedding-provider"],
     queryFn: () => apiGet<EmbeddingState>("/embedding/provider"),
-    refetchInterval: (data) => (data?.rebuilding != null ? 1000 : false),
+    refetchInterval: (query) => (query.state.data?.rebuilding != null ? 1000 : false),
   });
 }
 
@@ -64,8 +64,8 @@ export function useRebuildStatus(rebuildId: string | null, active: boolean) {
     queryKey: ["embedding-rebuild", rebuildId],
     queryFn: () => apiGet<RebuildStatus>(`/embedding/rebuild/${rebuildId ?? ""}`),
     enabled: active && rebuildId != null,
-    refetchInterval: (data) => {
-      const s = data?.status;
+    refetchInterval: (query) => {
+      const s = query.state.data?.status;
       return s === "done" || s === "error" ? false : 1000;
     },
   });

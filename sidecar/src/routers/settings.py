@@ -135,6 +135,20 @@ def _capture_status() -> dict:
     }
 
 
+@router.get("/diagnostics/degrade")
+def degrade_diagnostics():
+    """三链降级计数（P8 可用性收尾，R14 内容无关）。
+
+    `{chains: {asr|llm|embedding: {total, by_kind, by_provider}}}`——
+    只有链名/provider 名/错误种类/计数，无文本、无向量、无 key。
+    ASR 由进程单例切换板写入；LLM 由问答降级链写入；embedding 由重建失败
+    与问答时向量故障写入。sidecar 重启即清零（内存语义）。
+    """
+    from diagnostics.degrade import snapshot
+
+    return {"chains": snapshot()}
+
+
 @router.get("/diagnostics/audio")
 def audio_diagnostics():
     """最近一次音频 WS 连接的内容无关计数 + 限额（诊断面板轮询用，R14）。

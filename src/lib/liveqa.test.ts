@@ -80,6 +80,13 @@ describe("展示策略（PRD「展示策略」小节）", () => {
     expect(liveSourceLabel(result("fail_closed", "知识库未命中"))).toBe("");
     expect(liveSourceLabel(result("error", "boom"))).toBe("");
   });
+
+  it("P8：llm 结果带实际出力 provider 标注（无则沿用旧标签）", () => {
+    expect(liveSourceLabel({ ...result("llm", "x", [FTS]), provider: "ollama" })).toBe(
+      "LLM 生成（ollama）",
+    );
+    expect(liveSourceLabel({ ...result("llm", "x", [FTS]), provider: null })).toBe("LLM 生成");
+  });
 });
 
 // ------------------------------------------------------------------ 平台矩阵

@@ -70,7 +70,12 @@ export function liveSourceLabel(result: QAResult): string {
     const top = result.sources[0];
     return top != null ? sourceLabel(top) : "字段直查";
   }
-  if (result.kind === "llm") return "LLM 生成";
+  // P8：降级链出力的答案标注实际 provider（无标注=单 provider 或旧 sidecar）。
+  if (result.kind === "llm") {
+    return result.provider != null && result.provider !== ""
+      ? `LLM 生成（${result.provider}）`
+      : "LLM 生成";
+  }
   return "";
 }
 

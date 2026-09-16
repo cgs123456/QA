@@ -52,7 +52,8 @@ class FakeEmbed:
 def qa_client(api_client, monkeypatch):
     client, conn = api_client
     monkeypatch.setattr(qa_mod, "_conn", lambda: conn)
-    monkeypatch.setattr(qa_mod, "_get_llm", lambda name: FakeLLM())
+    # 签名须与 _get_llm(name, fallbacks) 同步（P8 降级链备选序列）。
+    monkeypatch.setattr(qa_mod, "_get_llm", lambda name, fallbacks=(): FakeLLM())
     monkeypatch.setattr(qa_mod, "_get_embedder", lambda: FakeEmbed())
     store = create_store(conn, "问答库")
     seed = json.loads(EVAL_SEED.read_text(encoding="utf-8"))
@@ -183,7 +184,7 @@ def test_disconnect_cancels_background(db, monkeypatch):
     monkeypatch.setattr(qa_mod, "answer_stream", gated_stream)
     monkeypatch.setattr(qa_mod, "_conn", lambda: db)
     monkeypatch.setattr(qa_mod, "_get_embedder", lambda: FakeEmbed())
-    monkeypatch.setattr(qa_mod, "_get_llm", lambda name: object())
+    monkeypatch.setattr(qa_mod, "_get_llm", lambda name, fallbacks=(): object())
 
     async def _scenario():
         task = qa_mod._Task("q", "s", None)

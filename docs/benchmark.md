@@ -296,3 +296,34 @@ Mock 覆盖不放松：`test_llm_providers.py` **39 passed**（含每家 happy-p
 - 目录：`generation/provider.py::LLM_CATALOG` + `GET /llm/providers`
  （内容无关快照），设置页 `Settings.tsx::PROVIDERS` 六项，密钥全复用
   `POST /settings/llm-secret`。
+
+# Cloud embedding 重建实测（F5.3 双基建，2026-09-15）
+
+> 口径：`python scripts/bench_embedding.py [--api-key $OPENAI_API_KEY] [--n 20]`
+> 对 text-embedding-3-large 做 N 条批量 embed，输出机器行
+> `EMBED_N=… EMBED_S=… TOKENS=… DIM=3072`（耗时含限流退避等待；
+> TOKENS 为服务端 `usage.prompt_tokens` 求和，只记数不记文）。
+> key 解析顺序 `--api-key` > `OPENAI_API_KEY` 环境变量；缺失即 exit 2
+> 记延期，不伪造数字。
+
+## 真机联调结论（本机，2026-09-15）
+
+| 项 | 结果 |
+|---|---|
+| key | 缺（`OPENAI_API_KEY` 为空，`--api-key` 未传） |
+| 实测 | 未跑（脚本按设计 `EMBEDDING_DEFERRED=1 reason=no-key`，exit 2，已验证） |
+| 本地 leg | bge 权重在位（`test_embedder.py` NEED_MODEL 未跳过即证；缺则单测跳过 loudly） |
+
+**延期台账（key，非代码）：** 无真实 OpenAI Key，本机无法实测 cloud 重建耗时
+与成本。Mock 覆盖不放松：`test_embedding.py` **32 passed**（含批量切分/
+429 退避/成本日志无文本/维度守卫/切换全流程/失败不翻转/不断链/SIGKILL 回滚），
+`pytest tests/` 全绿。有 key 的机器跑 `scripts/bench_embedding.py --n 20`
+（及全量重建的 `tokens` 进度），把 `EMBED_N/EMBED_S/TOKENS` 行追加到本表即关闭台账。
+
+# Linux keyring fallback 延期台账（P8/F6.3，无 Linux 真机，2026-09-15）
+
+| 项 | 结果 |
+|---|---|
+| 代码路径 mock 覆盖 | `cargo test --lib security` 16 passed（fallback 10 + keychain 6，三态全覆盖） |
+| Linux 真机 | 未跑（本机 Windows；`/etc/machine-id` 读取、0o600 落盘、libsecret 缺失分支需 Linux） |
+| 关闭条件 | Linux 机器：① 无桌面密钥环环境读 key 报加密文件路径错误而非明文回退；② 存取 roundtrip；③ `stat -c %a` 为 600；④ 换 machine-id 后读失败。把四行结论贴回即关闭。 |

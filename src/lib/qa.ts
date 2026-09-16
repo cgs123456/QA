@@ -15,6 +15,9 @@ export type QASource = {
   score: number;
   routes?: string[];
   payload: Record<string, unknown>;
+  /** F2.3 高亮片段（后端 `hl_question`/`hl_answer`，缺席=无标，回落纯文本）。 */
+  hl_question?: string;
+  hl_answer?: string;
 };
 
 export type QAKind = "direct" | "llm" | "fail_closed" | "error";
@@ -24,6 +27,10 @@ export type QAResult = {
   text: string;
   sources: QASource[];
   llm_calls: number;
+  /** 实际出力的 LLM provider（P8 降级链；direct/fail_closed 为 null；旧 sidecar 缺省）。 */
+  provider?: string | null;
+  /** 逐级失败摘要（`["备选:kind", ...]`，复用 asr_final degraded 模式；无则空）。 */
+  degraded?: string[];
 };
 
 /** 流内事件（供调用方增量渲染，如流式生成时逐块上屏）。 */
@@ -35,6 +42,8 @@ export type AskEvent =
 export type AskOptions = {
   storeId?: string;
   provider?: string;
+  /** P8 降级备选序列（首选失败按序尝试；省略即单 provider）。 */
+  fallbacks?: string[];
   /** 调用方取消信号（取消是正常路径，不产生错误态）。 */
   signal?: AbortSignal;
   onEvent?: (event: AskEvent) => void;
@@ -52,12 +61,13 @@ export const STREAM_TIMEOUT_MS = 120_000;
  * 对提词场景尤其危险（用户会把被截断的句子当成完整回答念出去）。
  */
 export async function askQuestion(question: string, opts: AskOptions = {}): Promise<QAResult> {
-  const { storeId, provider, signal, onEvent, streamTimeoutMs = STREAM_TIMEOUT_MS } = opts;
+  const { storeId, provider, fallbacks, signal, onEvent, streamTimeoutMs = STREAM_TIMEOUT_MS } = opts;
 
   const { task_id } = await apiPost<{ task_id: string }>("/qa/ask", {
     question,
     ...(storeId != null ? { store_id: storeId } : {}),
     ...(provider != null ? { provider } : {}),
+    ...(fallbacks != null ? { fallbacks } : {}),
   });
 
   const res = await sidecarFetch(
