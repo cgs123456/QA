@@ -16,12 +16,36 @@ jobs:
         with:
           node-version: 22
       - uses: pnpm/action-setup@v4
+        with:
+          # v4 **必须**显式给版本，否则直接失败（"No pnpm version is specified"）。
+          # 不用 `package.json` 的 `packageManager` 字段：实测 pnpm 12 会因此想往
+          # pnpm-lock.yaml 写 `packageManagerDependencies`，于是
+          # `pnpm install --frozen-lockfile` 报 ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE
+          # —— 换个方式红。此处 pin 的版本已在本机用同一条 frozen-lockfile 命令验证通过。
+          version: 12.4.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec eslint src tests/e2e
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+  rust-test:
+    # S8 之前 CI 只有 clippy，**一条 Rust 测试都没跑过** —— 伴侣那 27 例只在开发机上绿过。
+    # 只跑 `companion_test`：它自包含（不要 python sidecar、不要音频设备），
+    # 且「本机没有局域网网卡」时自己打 skip 并按通过处理，不会在 runner 上假红。
+    # `--lib` 的 163 例在本机 Windows 全绿，但从未在 Linux 上验证过（含音频/键盘的 cfg 分支），
+    # 验证过之前不进 CI —— 免得把「没测」变成「假红」。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: system deps (linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --test companion_test
 
   pytest:
     runs-on: ubuntu-latest
@@ -41,6 +65,13 @@ jobs:
         with:
           node-version: 22
       - uses: pnpm/action-setup@v4
+        with:
+          # v4 **必须**显式给版本，否则直接失败（"No pnpm version is specified"）。
+          # 不用 `package.json` 的 `packageManager` 字段：实测 pnpm 12 会因此想往
+          # pnpm-lock.yaml 写 `packageManagerDependencies`，于是
+          # `pnpm install --frozen-lockfile` 报 ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE
+          # —— 换个方式红。此处 pin 的版本已在本机用同一条 frozen-lockfile 命令验证通过。
+          version: 12.4.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm exec tsc --noEmit
@@ -56,6 +87,13 @@ jobs:
         with:
           node-version: 22
       - uses: pnpm/action-setup@v4
+        with:
+          # v4 **必须**显式给版本，否则直接失败（"No pnpm version is specified"）。
+          # 不用 `package.json` 的 `packageManager` 字段：实测 pnpm 12 会因此想往
+          # pnpm-lock.yaml 写 `packageManagerDependencies`，于是
+          # `pnpm install --frozen-lockfile` 报 ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE
+          # —— 换个方式红。此处 pin 的版本已在本机用同一条 frozen-lockfile 命令验证通过。
+          version: 12.4.1
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:

@@ -1918,3 +1918,18 @@ highlight 8 = **167**。
   **DoD 数字**：`cargo test --test companion_test` **27/27**；`cargo clippy --lib --tests` **0 warning**；
   `cargo fmt --check` 干净。
   **文件清单**：改动 `src-tauri/tests/companion_test.rs`、`docs/companion-security.md`、`docs/PROGRESS.md`。
+
+- **taskS8 加固之二：CI 里其实一条 Rust 测试都没跑过**（同日续）：
+  **发现**：`.github/workflows/ci.yml` 只有 `cargo clippy`，**没有任何 `cargo test`** ——
+  伴侣那 27 例（以及 `--lib` 的 163 例）只在开发机上绿过，push 上去 CI 是哑的。
+  **修**：新增 `rust-test` job（ubuntu-latest）：装 webkit 系依赖 →
+  `cargo test --manifest-path src-tauri/Cargo.toml --test companion_test`。
+  **只放 companion_test 一个**：它自包含（不要 python sidecar、不要音频设备），
+  且「没有局域网网卡」时自己 skip，不会在 runner 上假红；`--lib` 的 163 例从未在 Linux 上
+  验证过（含音频/键盘的 cfg 分支），验证过之前不进 CI —— 不能把「没测」直接变成「假红」。
+  **顺带补一条漂移钉**：`the_phone_page_agrees_on_the_protocol_version_and_the_ws_path` ——
+  手机页里的 `PROTOCOL_VERSION` 与 `/ws` 是**手抄**进 HTML 字符串的，抄错不编译失败，
+  只在真机上表现为「版本不一致」。**28/28**。
+  **DoD 数字**：`cargo test --test companion_test` **28/28**；clippy 0 warning；`cargo fmt --check` 干净。
+  **文件清单**：改动 `.github/workflows/ci.yml`、`src-tauri/tests/companion_test.rs`、
+  `docs/companion-security.md`、`docs/PROGRESS.md`。

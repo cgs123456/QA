@@ -20,7 +20,7 @@ use futures_util::{SinkExt, StreamExt};
 use interview_copilot_lib::companion::{
     build_page_url, build_ws_url, cards_frame, generate_token, is_lan_ipv4, parse_token,
     pick_lan_ip, render_qr_svg, token_ok, welcome_frame, CompanionService, CompanionState,
-    LiveCard, COMPANION_PORT, PROTOCOL_VERSION,
+    LiveCard, COMPANION_PORT, PROTOCOL_VERSION, WS_PATH,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -703,6 +703,29 @@ fn the_phone_page_has_no_uplink_capability() {
         );
     }
     assert!(page.contains("onmessage"), "总得收消息吧");
+}
+
+/// 手机页里那份 JS 的 `PROTOCOL_VERSION` 是**手抄**的（页面是自包含字符串，没法 include）。
+/// 抄错不会编译失败，只会在真机上表现为「版本不一致」——所以钉一条源码断言。
+#[test]
+fn the_phone_page_agrees_on_the_protocol_version_and_the_ws_path() {
+    let page = read_source("src/companion/phone_page.rs");
+    let marker = "PROTOCOL_VERSION = ";
+    let idx = page
+        .find(marker)
+        .unwrap_or_else(|| panic!("手机页里应当声明 {marker}"));
+    let tail = &page[idx + marker.len()..];
+    let literal: String = tail.chars().take_while(char::is_ascii_digit).collect();
+    assert!(!literal.is_empty(), "协议版本得是个数字");
+    assert_eq!(
+        literal.parse::<u32>().unwrap(),
+        PROTOCOL_VERSION,
+        "手机页与 Rust 的协议版本不一致（改版本要同时改四处，见 docs/companion-security.md §6）"
+    );
+    assert!(
+        page.contains(WS_PATH),
+        "手机页连的不是 {WS_PATH} —— Rust 侧只认这个路径"
+    );
 }
 
 #[test]

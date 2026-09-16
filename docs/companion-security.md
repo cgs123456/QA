@@ -3,7 +3,7 @@
 > 版本：2026-09-16（S8 落地版）｜归属：Phase 3 / S8 ｜ 与 `docs/stealth-boundary.md` 互补，**不冲突、不重叠**。
 >
 > 实现：`src-tauri/src/companion/{mod,server,phone_page}.rs`；测试：`src-tauri/tests/companion_test.rs`
-> （**27 例**，其中 3 例直接绑**真实局域网网卡**，不只是 127.0.0.1 的测试缝）。
+> （**28 例**，其中 3 例直接绑**真实局域网网卡**，不只是 127.0.0.1 的测试缝）。
 
 ---
 
@@ -109,11 +109,15 @@
 3. 本文档 §4；
 4. `companion_test.rs` 的 `frames_match_the_wire_contract` / welcome 断言。
 
+第 2 条（手机页里那份 `PROTOCOL_VERSION` 是**手抄**的）有
+`the_phone_page_agrees_on_the_protocol_version_and_the_ws_path` 兜底：抄错不会编译失败，
+只会在真机上表现为「版本不一致」，所以钉一条源码断言。
+
 新增帧类型必须双向评审（Rust + 页面），防止单边扩展破坏兼容。
 
 ## 7. 手工验收清单（自动化覆盖不到的部分）
 
-自动化已覆盖协议与鉴权的全部语义（`companion_test.rs` 27 例）。其中三例刻意**绑真实局域网网卡**，
+自动化已覆盖协议与鉴权的全部语义（`companion_test.rs` 28 例）。其中三例刻意**绑真实局域网网卡**，
 因为回环上跑通不等于手机连得上：
 
 | 用例 | 钉住什么 |
@@ -121,6 +125,10 @@
 | `start_binds_a_private_lan_ip_and_refuses_when_there_is_none` | 生产路径 `start()` 真的只绑 RFC1918 私有 IPv4 + 固定端口 54322；没有局域网时 fail-closed |
 | `the_lan_interface_serves_the_page_and_the_card_stream` | 从**网卡地址**（非 127.0.0.1）取页面（200/401）与握手推卡片全通；stop 后端口真关 |
 | `a_busy_production_port_fails_loudly_instead_of_silently_moving` | 54322 被占用时报错并停在 `Stopped`，不偷偷换端口继续监听 |
+
+另有 `the_phone_page_agrees_on_the_protocol_version_and_the_ws_path` 钉住「页面与 Rust 的
+协议版本一致 + 连的是 `/ws`」——手机页里那份常量是**手抄**的，抄错不会编译失败，只在真机上表现为
+「版本不一致」。
 
 下面这些仍要拿真手机走一遍：
 
