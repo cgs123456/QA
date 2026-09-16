@@ -182,19 +182,31 @@ def metrics(s: dict) -> dict:
     的真正度量：`direct_rate` 会把「自信地答错」也算进去，越线时它反而更好看。
     """
     det = s.get("details", [])
-    exp_ok = lambda d: (d.get("top1") or {}).get("key") == d.get("expected_qa_id")
+
+    def _ok(d):
+        # 字段题：硬规则 direct 且 top1 为该字段本身即对（top1.key 是 field_id，
+        # 故按 top1_name 比对字段名）。
+        if d.get("field_probe"):
+            return (d.get("action") == "direct"
+                    and (d.get("top1") or {}).get("type") == "field"
+                    and (d.get("top1") or {}).get("name") == d.get("expected_field"))
+        return (d.get("top1") or {}).get("key") == d.get("expected_qa_id")
+
     direct = [d for d in det if d.get("action") == "direct"]
     return {
         "top3": s["top3_rate"],
         "top5": s["top5_rate"],
         "null_fc": s["null_fail_closed_rate"],
         "direct": s["direct_rate"],
-        "direct_ok": sum(1 for d in direct if exp_ok(d)),
-        "direct_wrong": sum(1 for d in direct if not exp_ok(d)),
+        "direct_ok": sum(1 for d in direct if _ok(d)),
+        "direct_wrong": sum(1 for d in direct if not _ok(d)),
         "fc": s["fail_closed_rate"],
         "answered": s["answered"],
         "wrong": s["wrong_answers"],
         "wrong_rate": s["wrong_answer_rate"],
+        "field_ok": s.get("field_direct_ok", 0),
+        "field_n": s.get("field_items", 0),
+        "field_rate": s.get("field_direct_rate", 0.0),
     }
 
 
@@ -206,6 +218,8 @@ _COLS = [
     ("answered", "答了", "{:d}"),
     ("wrong", "答错", "{:d}"),
     ("wrong_rate", "答错率", "{:.3f}"),
+    ("field_ok", "field对", "{:d}"),
+    ("field_n", "field共", "{:d}"),
 ]
 
 
@@ -224,11 +238,14 @@ def dump_details(s: dict, path: Path, stats: dict | None = None) -> None:
         det.append({
             "question": d["question"],
             "expected": d.get("expected_qa_id"),
-            "scored": d["scored"],
+            "expected_field": d.get("expected_field"),
+            "scored": d.get("scored"),
+            "field_probe": d.get("field_probe", False),
             "action": d.get("action"),
             "top1_score": d.get("top1_score"),
             "top1": (d.get("top1") or {}).get("key"),
             "top1_type": (d.get("top1") or {}).get("type"),
+            "top1_name": (d.get("top1") or {}).get("name"),
             "top3_hit": d.get("top3_hit"),
             "top5_hit": d.get("top5_hit"),
             "answered": d.get("answered"),
@@ -421,7 +438,15 @@ def main() -> None:
                 qs += [ln.strip() for ln in
                        Path(args.probe_file).read_text(encoding="utf-8").splitlines()
                        if ln.strip() and not ln.startswith("#")]
-            _apply(BASELINE)
+            # P6.1：探针默认仍是冻结基线（初值），但 --base/--config 可叠加——
+            # 否则 s4 档位下的错题剖析只能看初值档位，归因全错（P6.1 前探针无视这两个参数）。
+            eff = dict(BASELINE)
+            if args.base:
+                eff.update(json.loads(args.base))
+            if args.config:
+                eff.update(json.loads(args.config))
+            _apply(eff)
+            print(f"[probe] 常量 {eff}")
             for q in qs:
                 probe(h, q)
             return
@@ -450,7 +475,9 @@ def main() -> None:
             print(table([("默认常量", s)]))
             print(f"\n动作分布：{s['actions']}")
             print(f"语料：qa_docs={s['qa_docs']}  题目 {s['n']}"
-                  f"（{s['scored']} scored + {s['null_items']} null）")
+                  f"（{s['scored']} scored + {s['null_items']} null"
+                  f" + {s.get('field_items', 0)} field）"
+                  f" field_direct={s.get('field_direct_ok', 0)}/{s.get('field_items', 0)}")
             if args.dump:
                 dump_details(s, ROOT / args.out, h.stats)
             return

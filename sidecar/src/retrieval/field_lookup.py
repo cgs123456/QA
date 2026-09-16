@@ -57,32 +57,40 @@ def normalize_query(query: str) -> str:
 
 
 def _exact(conn, store_id: str, limit: int, raw: str) -> dict:
-    """精确相等（原文 + 归一化两轮），s=1.0。"""
+    """精确相等（原文 + 归一化两轮），s=1.0。
+
+    P6.1 出处标记：`exact_kind` = "name"（问的就是这个字段名本身）/
+    "alias"（问的是别名整句）。判定层的裸字段名救援只认 "name" ——
+    别名语义宽于字段（如“退货政策”之于“退货期限”），不能享受同等待遇。
+    """
     hits: dict = {}
     tried: set = set()
     for text in (raw, normalize_query(raw)):
         if not text or text in tried:
             continue
         tried.add(text)
-        rows = conn.execute(
-            "SELECT f.id, f.entity, f.field_name, f.field_value FROM fields f"
-            " WHERE f.store_id=? AND (f.field_name=? OR EXISTS (SELECT 1"
-            " FROM field_aliases a WHERE a.field_id=f.id AND a.alias=?))"
-            " LIMIT ?",
-            (store_id, text, text, limit),
-        ).fetchall()
-        for fid, entity, name, value in rows:
-            hits.setdefault(
-                fid,
-                {
-                    "field_id": fid,
-                    "entity": entity,
-                    "field_name": name,
-                    "field_value": value,
-                    "source": "field",
-                    "s": 1.0,
-                },
-            )
+        for kind, sql in (
+            ("name", "SELECT f.id, f.entity, f.field_name, f.field_value FROM fields f"
+                      " WHERE f.store_id=? AND f.field_name=? LIMIT ?"),
+            ("alias", "SELECT f.id, f.entity, f.field_name, f.field_value FROM fields f"
+                      " WHERE f.store_id=? AND EXISTS (SELECT 1"
+                      " FROM field_aliases a WHERE a.field_id=f.id AND a.alias=?) LIMIT ?"),
+        ):
+            rows = conn.execute(sql, (store_id, text, limit)).fetchall()
+            for fid, entity, name, value in rows:
+                if fid not in hits:
+                    hits[fid] = {
+                        "field_id": fid,
+                        "entity": entity,
+                        "field_name": name,
+                        "field_value": value,
+                        "source": "field",
+                        "s": 1.0,
+                        "exact_kind": kind,
+                    }
+                elif kind == "name":
+                    # 同一字段名和别名都精确命中时，出处记更强的字段名。
+                    hits[fid]["exact_kind"] = "name"
     return hits
 
 

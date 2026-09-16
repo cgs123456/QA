@@ -1004,34 +1004,37 @@
 > `142 ≠ 148` 四处记账漂移。**结论先行：四处均无法精确归因**（原因见 §3），
 > 防再漂移靠 §4 的纪律，不靠补算。
 
-### 1. 当前全量（2026-09-16，P12 本机补跑；B 机本 shell，node v22.22.2 / python 3.13.14）
+### 1. 当前全量（2026-09-16，P6.1 本机实测；B 机本 shell，python 3.13.14）
 
-- `pytest --collect-only -q` → **396 collected**；全量 `pytest`
- （`NO_PROXY=127.0.0.1,localhost`）→ **396 passed / 1 skipped**（91.20s）
-- `vitest run --reporter=verbose` → **167 passed / 12 files**（24.29s；
-  159 + `highlight.test.ts` 8。`liveqa.test.ts` 30 与旧台账一致——原“P10 新增 6 + liveqa +1
-  未跑”已过期：`highlight` 实测为 **8** 非 6，liveqa +1 早已在 159 内。以本轮逐文件枚举为准）
-- `tsc --noEmit` **0**（初跑 2 错误：P5 遗留 `useEmbedding.ts` 的 `refetchInterval`
-  首参误写成 `data`，已修为 `(query) => query.state.data…`，详见 `acceptance-m3.md` §8.3）；
-  `eslint src tests/e2e --max-warnings=0` **0**
+- `pytest --collect-only -q` → **409 collected**；全量 `pytest`
+ （`NO_PROXY=127.0.0.1,localhost`）→ **409 passed / 0 skipped**（~84s）。
+ 归属：P12 基线 396（含 webrtcvad skip 1，本轮该依赖就位故 skip 归零）
+  + P6.1 新增 4（`test_eval` 字段解析校验 1 + `test_hybrid_rank` 救援 2 +
+  `test_answer_router` 分母剔除端到端 1）
+  + 并发 R19 会话新增 9（`test_audio_eval_vad` 6 + `test_audio_eval` 1 +
+  `test_asr_fallback` 2，其文件未提交、不归本任务，见 P6.1 条）。
+- `vitest run --reporter=verbose` → **167 passed / 12 files**（P12 实测，本任务零前端改动，未重跑）
+- `tsc --noEmit` **0** / `eslint src tests/e2e --max-warnings=0` **0**（P12 实测，同上）
 
 **1 skipped 的原因（E 项）**：唯 `webrtcvad` 可选依赖缺失时跳过一条 VAD 相关用例
 （导入期 `skipif` 判定）。与 C1b 行记录的 skip **同源**，**不是失败、不是漏测**；
 B 机装了 `webrtcvad-wheels` 故为 0 skipped —— 这就是 A/B 两机 skipped 数不同的全部原因。
 
-**pytest per-file（collected，本轮实测）**：`test_llm_providers` 39 / `test_embedding` 32 /
-`test_import_p1` 29 / `test_asr_fallback` 25 / `test_query_prep` 19 /
-`test_audio_protocol` 17 / (`test_export_import` `test_audio_eval`
-`test_llm_fallback`) 各 15 / (`test_asr_text_clean` `test_local_agreement`) 各 13 /
-(`test_highlight` `test_sherpa_providers`) 各 11 / `test_low_latency` 10 /
-`test_hybrid_rank` 9 / (`test_retrieval` `test_asr_switch` `test_answer_router`
-`test_migrations` `test_diagnostics_degrade`) 各 8 / (`test_knowledge_compiler`
-`test_providers` `test_connection`) 各 7 / `test_qa_stream` 6 /
+**pytest per-file（collected，P6.1 实测；求和 409）**：`test_llm_providers` 39 /
+`test_embedding` 32 / `test_import_p1` 29 / `test_asr_fallback` 27 /
+`test_query_prep` 19 / `test_audio_protocol` 17 / `test_audio_eval` 16 /
+(`test_export_import` `test_llm_fallback`) 各 15 /
+(`test_asr_text_clean` `test_local_agreement`) 各 13 /
+(`test_hybrid_rank` `test_sherpa_providers` `test_highlight`) 各 11 /
+`test_low_latency` 10 / `test_answer_router` 9 /
+(`test_retrieval` `test_asr_switch` `test_migrations` `test_diagnostics_degrade`) 各 8 /
+(`test_knowledge_compiler` `test_providers` `test_connection`) 各 7 /
+`test_qa_stream` 6 / `test_audio_eval_vad` 6 /
 (`test_prompt_guard` `test_simple_extension` `test_routers` `test_model_download`
-`test_downloader` `test_auth` `test_vector_search`) 各 5 /
-(`tests/eval/test_eval` `test_settings` `test_embedder` `test_diagnostics`) 各 4 /
+`test_downloader` `test_auth` `test_vector_search` `tests/eval/test_eval`) 各 5 /
+(`test_settings` `test_embedder` `test_diagnostics`) 各 4 /
 `test_auth_coverage` 2 / (`test_rollback` `test_health`
-`tests/eval/test_eval_full`) 各 1（求和 396，与 collected 一致）。
+`tests/eval/test_eval_full`) 各 1（求和 409，与 collected 一致）。
 
 **vitest per-file（本轮实测）**：trigger 50 / liveqa 30 / capture 28 / importFlow 15 / api 7 /
 ReviewPanel 6 / EmbeddingConfig 6 / ColumnMapping 5 / Knowledge 4 / windowView 4 / sse 4 /
@@ -1331,3 +1334,45 @@ highlight 8 = **167**。
   P6 时可用），e2e embed 走 zeros-fallback（首字计时不受影响），`eval_calibrate --probe`
   同因不可跑——新 env 回归待查，P13 范围外，已记 `benchmark.md` F6.1。
   key 纪律：旧 key 作废（M2 §7 已记轮换）；新 key 未进任何文件（`git status` 无残留）。
+- P6.1 补盲区 + 重锚 + verdict 翻转（2026-09-16，B 机）：
+  输入锁定：29 字段中 8 有 QA 孪生（公司信息 4 + 支付方式/会员等级/额定功率/净重）、
+  **21 无孪生**（物流 5 + 退换 5 + 支付开票 4 + 会员 4 + 产品 3）——与 eval-final §4 的 21 一致，
+  口径为“同 entity 无以该字段名为题的 QA”。torch 已恢复（P13 的 DLL 坏是 transient，
+  `--probe` 复核可用）。P12 遗留条件关闭：PRD（Desktop 落仓版）F4.5=JSON/Markdown 导出、
+  F11.6=命令行导出 JSON/Markdown——**双格式实锤，无真缺口，不开新项**。
+  **评测集 v2**：冻结 100 行未动，追加 24 行（21 裸字段名探针 `expected_field` 新键 +
+  3 null：“退货政策”别名精确对抗 + “支持货到付款吗” + “你们公司在哪”），124 题 =
+  87 scored + 16 null + 21 field；loader 去重撞车一次（“你们老板是谁”已是第 59 行，
+  改“你们公司在哪”）；null 断言由计数改占比（16/124≈12.9%）；`real` 保持 80。
+  裸名是唯一触发精确相等（s=1.0）的问法（自然问法走包含 0.8），探针口径已声明。
+  **仪器**：字段题不进 Top-3 分母（单列 field 指标）；`metrics.direct` 对/错含字段；
+  `dump` top1 取 decision 落子（修过一个把 11 个救援计入 direct 错的仪器 bug——
+  判卷看落子不看排序）；`--probe` 开始 honoring `--base`/`--config`
+  （此前恒为初值档位，教训）；`test_eval` 计数 124/87/16/21 + `expected_field`
+  语料解析校验。
+  **真缺口（v2 首跑）**：21 裸名仅 1 个走字段 direct，10 个被 FC 错杀——entity_scaled
+  联动把同 entity QA 全抬 f=1.0，字段本身（0.158）永无出头，P6 硬规则几乎不可达。
+  **修复**：`decide` 裸字段名救援（top 非字段 + top1 < TH_DIRECT + 字段名精确 s=1.0 →
+  该字段 direct；QA ≥0.65 仍优先；别名精确不触发）。`field_lookup._exact` 拆名/别名
+  两查打 `exact_kind` 出处，经 `fuse` 透传；单测 2 条；`decide` 陈旧 docstring
+  （0.75/0.45、13 null）同步更新。
+  **R15 五步 v2**：s0 0.8621/0.750/35对22错/38错/field 1 → s4 **0.9080/1.000/
+  63对14错/15错/field 12**（11 救援 + 1 平局）；常量**不位移**（s4 == P6 定稿）。
+  v3 子集对照：103 题数字与 P6 **逐项一致**（direct 51/5、答错 6、FC 0.3218、
+  nullFC 16/16），零 v3 题触发救援——改动只影响 21 探针。
+  **裁决**：9 劫持-direct 人工逐对核对（8 对 1 错：“换货申请时限”→eval-037 答方式
+  不答时限，探针 texture 在案，**不修**——词袋歧义，降权伤 Top-3）→ 答错裁决 7
+  （0.088，与初值持平）；direct 错裁决 6（初值 5，+1 披露）；FC(非null) 0.2593
+  （初值 0.3218，改善）；对抗“退货政策”FC（别名被排除在救援外，设计意图）。
+  机器表保留严格口径，裁决表见 eval-final §7.7，两份都落盘。
+  **剩余盲区**：自然问法（“包邮门槛是多少”含 0.8）仍 FC（@0.507）——救援仅覆盖裸名
+  精确（故意，不放 0.8 否则对抗也进来）；下一步候选，非本任务。
+  **结构案例**：`fuse` 算术未动，`test_hybrid_rank` 11 条无需改全绿；全仓 grep
+  0.750/0.500 仅历史行 + 门限语义，无僵尸。**分母剔除端到端**：
+  `test_vec_index_empty_drops_denominator_end_to_end`（空 vec 表 + “包邮门槛是多少”→
+  direct；全分母 0.507 FC，接线断开即红）。
+  **verdict**：M1 #6 → 通过（Top-3 0.9080，D6 待办关闭；tag 仍暂缓，改以后两项为主）；
+  M3 #1 证据刷新 v2。PRD §3.3（Desktop 仓外文件，先备份再改）：评测集 124、
+  标定结果 v2、补充规则 +1（救援两条护栏）、null 16/16；常量数值不动。
+  DoD：Top-3 0.9080 ✅ / null 1.000 ✅ / 答错 machine 15（s0 35↓）裁决 7 ✅ /
+  pytest 全绿（见下）。

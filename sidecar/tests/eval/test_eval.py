@@ -1,7 +1,8 @@
 """eval 骨架单测：loader 校验 + runner 在合成语料上跑通。
 
 语料规模（2026-09-15 扩库）：seed_demo.json 由 8 QA 扩到 **108 QA + 29 字段**
-（6 类目），题目由 59 补到 **100 题（87 scored + 13 应 Fail-Closed）**。
+（6 类目），题目由 59 补到 **100 题（87 scored + 13 应 Fail-Closed）**；
+P6.1 v2 再追加 21 道纯字段探针 + 3 道 null（87 scored + 16 null + 21 field = 124）。
 文件名 seed_demo 是历史遗留（首版只有 8 条 demo），扩库后它就是这个仓库的
 唯一合成语料 —— 没有另建第二份语料文件，避免出现两个真相源。
 """
@@ -38,13 +39,19 @@ def _seed_demo(db):
 
 def test_loader_schema_and_errors(tmp_path):
     items = load_eval_items(EVAL_DIR / "questions_100.jsonl")
-    assert len(items) == 100
+    assert len(items) == 124
     assert all(isinstance(it, EvalItem) for it in items)
-    # null 题（应 Fail-Closed）占比必须留在 10~15/100 —— 这是评测集的口径约束，
+    # null 题（应 Fail-Closed）占比必须留在 10~15% —— 这是评测集的口径约束，
     # 不是分数线：null 太少则红线没被压测，太多则命中率失去统计意义。
-    n_null = sum(1 for it in items if it.expected_qa_id is None)
-    assert 10 <= n_null <= 15
+    # P6.1 v2 起按占比断言（16/124≈12.9%）：n=100 时的计数写法与此同义。
+    n_null = sum(1 for it in items if it.expected_qa_id is None
+                 and it.expected_field is None)
+    assert 0.10 <= n_null / len(items) <= 0.15
     assert sum(1 for it in items if "real" in it.tags) == 80
+    assert sum(1 for it in items if it.expected_field is not None) == 21
+    # expected_qa_id 与 expected_field 互斥（loader 硬拒，此处钉住冻结集本身干净）。
+    assert all(not (it.expected_qa_id is not None and it.expected_field is not None)
+               for it in items)
 
     bad = tmp_path / "bad.jsonl"
     bad.write_text('{"question": "", "expected_qa_id": "x"}\n', encoding="utf-8")
@@ -89,13 +96,36 @@ def test_every_expected_id_resolves_to_the_corpus():
     assert dangling == [], f"题目引用了语料里不存在的 qa_id：{dangling}"
 
 
+def test_every_expected_field_resolves_to_the_corpus():
+    """expected_field 必须真在语料里（与 qa_id 引用校验同理）。
+
+    字段裸名探针一旦写错字，field_lookup 精确相等永远等不上，
+    该题会以 FC 静默失败，看起来像"字段路变差了"。这条断言把这种
+    静默失败变成红色。
+    """
+    seed = json.loads((EVAL_DIR / "seed_demo.json").read_text(encoding="utf-8"))
+    corpus_fields = set()
+    for entity, fields in seed.items():
+        if entity == "qa_pairs":
+            continue
+        corpus_fields.update(fields.keys())
+    items = load_eval_items(EVAL_DIR / "questions_100.jsonl")
+    dangling = sorted(
+        {it.expected_field for it in items if it.expected_field is not None}
+        - corpus_fields
+    )
+    assert dangling == [], f"题目引用了语料里不存在的字段名：{dangling}"
+
+
 def test_runner_on_demo_seed(db):
     sid = _seed_demo(db)
     items = load_eval_items(EVAL_DIR / "questions_100.jsonl")
     summary = evaluate(db, sid, items)
-    assert summary["n"] == 100
+    assert summary["n"] == 124
     assert summary["scored"] == 87
-    assert summary["null_items"] == 13
+    assert summary["null_items"] == 16
+    assert summary["field_items"] == 21
+    assert 0.0 <= summary["field_found_rate"] <= 1.0
     # 命中率 verdict 在 docs/eval-baseline.md（如实记录，不在单测里定分数线，
     # 防止“为过单测而调题/调阈值”的自我交易）；单测只锁结构与有效性。
     assert 0.0 <= summary["top3_rate"] <= 1.0

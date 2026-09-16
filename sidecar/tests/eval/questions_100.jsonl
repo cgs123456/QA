@@ -98,3 +98,27 @@
 {"expected_qa_id": null, "question": "你们有实体店吗", "tags": ["real", "fail-closed"]}
 {"expected_qa_id": null, "question": "你们有微信公众号吗", "tags": ["real", "fail-closed"]}
 {"expected_qa_id": null, "question": "帮我翻译一下这句话", "tags": ["real", "fail-closed"]}
+{"question": "默认快递", "expected_qa_id": null, "expected_field": "默认快递", "tags": ["field", "v2"]}
+{"question": "包邮门槛", "expected_qa_id": null, "expected_field": "包邮门槛", "tags": ["field", "v2"]}
+{"question": "出库时效", "expected_qa_id": null, "expected_field": "出库时效", "tags": ["field", "v2"]}
+{"question": "到货时效", "expected_qa_id": null, "expected_field": "到货时效", "tags": ["field", "v2"]}
+{"question": "偏远附加费", "expected_qa_id": null, "expected_field": "偏远附加费", "tags": ["field", "v2"]}
+{"question": "无理由天数", "expected_qa_id": null, "expected_field": "无理由天数", "tags": ["field", "v2"]}
+{"question": "退款到账时效", "expected_qa_id": null, "expected_field": "退款到账时效", "tags": ["field", "v2"]}
+{"question": "退回运费承担", "expected_qa_id": null, "expected_field": "退回运费承担", "tags": ["field", "v2"]}
+{"question": "换货申请时限", "expected_qa_id": null, "expected_field": "换货申请时限", "tags": ["field", "v2"]}
+{"question": "上门取件费", "expected_qa_id": null, "expected_field": "上门取件费", "tags": ["field", "v2"]}
+{"question": "分期期数", "expected_qa_id": null, "expected_field": "分期期数", "tags": ["field", "v2"]}
+{"question": "发票类型", "expected_qa_id": null, "expected_field": "发票类型", "tags": ["field", "v2"]}
+{"question": "开票时效", "expected_qa_id": null, "expected_field": "开票时效", "tags": ["field", "v2"]}
+{"question": "单笔限额", "expected_qa_id": null, "expected_field": "单笔限额", "tags": ["field", "v2"]}
+{"question": "积分规则", "expected_qa_id": null, "expected_field": "积分规则", "tags": ["field", "v2"]}
+{"question": "积分抵扣", "expected_qa_id": null, "expected_field": "积分抵扣", "tags": ["field", "v2"]}
+{"question": "积分有效期", "expected_qa_id": null, "expected_field": "积分有效期", "tags": ["field", "v2"]}
+{"question": "新人福利", "expected_qa_id": null, "expected_field": "新人福利", "tags": ["field", "v2"]}
+{"question": "产品尺寸", "expected_qa_id": null, "expected_field": "产品尺寸", "tags": ["field", "v2"]}
+{"question": "保修期", "expected_qa_id": null, "expected_field": "保修期", "tags": ["field", "v2"]}
+{"question": "防水等级", "expected_qa_id": null, "expected_field": "防水等级", "tags": ["field", "v2"]}
+{"question": "退货政策", "expected_qa_id": null, "expected_field": null, "tags": ["fail-closed", "v2"]}
+{"question": "支持货到付款吗", "expected_qa_id": null, "expected_field": null, "tags": ["fail-closed", "v2"]}
+{"question": "你们公司在哪", "expected_qa_id": null, "expected_field": null, "tags": ["fail-closed", "v2"]}

@@ -101,6 +101,12 @@ def _linkage_for(entity_strength, slot) -> float:
     return entity_strength * text
 
 
+def _best_exact(a, b):
+    """精确出处取强（name > alias > None/缺失）。"""
+    rank = {"name": 2, "alias": 1}
+    return a if rank.get(a, 0) >= rank.get(b, 0) else b
+
+
 def _active_weight(unavailable=()) -> float:
     """**可用**路的权重和（恒等于 W_SUM，除非有路明确不可用）。
 
@@ -151,6 +157,10 @@ def fuse(field_hits=(), jieba_hits=(), simple_hits=(), vec_hits=(),
             "entity": h.get("entity"),
             "field_name": h.get("field_name"),
             "field_value": h.get("field_value"),
+            # P6.1：精确出处（name/alias/None）透传，供 decide 裸字段名救援判定。
+            # 同一字段多次命中取更强出处（name > alias > 无）。
+            "exact_kind": _best_exact(slot["payload"].get("exact_kind"),
+                                      h.get("exact_kind")),
         }
     linked_entities = _linked_entities(field_hits)
     for route, hits in (
@@ -191,8 +201,12 @@ def fuse(field_hits=(), jieba_hits=(), simple_hits=(), vec_hits=(),
 
 def decide(fused: list) -> dict:
     """最终判定。返回 {"action", "items", "top1_score"}，action ∈
-    direct（≥0.75 直接返回）/ maybe_single（0.45–0.75 且 gap≥0.15，标注可能相关）/
-    maybe_multi（0.45–0.75 且 gap<0.15，交用户判断）/ fail_closed（<0.45 或空表）。"""
+    direct（≥TH_DIRECT 直接返回）/ maybe_single（TH_MAYBE–TH_DIRECT 且 gap≥GAP，
+    标注可能相关）/ maybe_multi（同上且 gap<GAP，交用户判断）/
+    fail_closed（<TH_MAYBE 或空表）。
+    另有两条硬规则（分数之外）：top1 为精确字段本身 → direct；
+    P6.1 裸字段名救援（精确字段名命中 + 无过 direct 线的 QA 竞争 → 字段 direct，
+    别名精确不触发）。"""
     if not fused:
         return {"action": "fail_closed", "items": [], "top1_score": 0.0}
     top = fused[0]
@@ -200,13 +214,26 @@ def decide(fused: list) -> dict:
     # 字段值即答案，不需要其它路背书。旧实现靠它在融合分里占 w_field/Σw 达标，
     # P6 把 w_field 从 3.0 下调到 1.5 后这条路径只有 0.158、跌破 TH_MAYBE 被全拒 ——
     # 而 29 个字段里 21 个没有 QA 孪生，等于字段直查主体失效。
-    # 安全性：13 道 null 对抗题无一精确命中字段名（唯一命中的「有纸质发票吗」是
-    # 包含匹配 s=0.80），故本规则不削弱拒答。
+    # 安全性：16 道 null 对抗题（v2，含别名精确命中的“退货政策”）无一精确命中
+    # **字段名**（“有纸质发票吗”与“退货政策”分别是包含 0.80 与别名精确），
+    # 故本规则与裸字段名救援都不削弱拒答。
     if top["type"] == "field" and top["s"]["field"] >= 1.0:
         return {"action": "direct", "items": [top], "top1_score": top["score"]}
     top1 = top["score"]
     if top1 >= TH_DIRECT:
         return {"action": "direct", "items": [fused[0]], "top1_score": top1}
+    # P6.1 裸字段名救援：问的就是字段名本身（name 精确，s=1.0），且没有融合分
+    # 过 direct 自信线的 QA 竞争 → 字段值直接答，不向下走 maybe/FC。
+    # 动因（v2 测出）：同 entity QA 被联动抬到 f=1.0 后 дружно 压过字段本身
+    # （1.5/9.5≈0.158），21 个裸字段名 10 个被 FC 错杀；字段值即答案，
+    # 此时听字段的比拒答诚实。两条护栏：① QA ≥ TH_DIRECT 仍以 QA 为准
+    # （twin 问答答案更丰富）；② 别名精确不触发（别名是整句、语义宽于字段，
+    # “退货政策”对抗题即因此不受影响，nullFC 不动）。
+    if top["type"] != "field":
+        for c in fused[1:]:
+            if (c["type"] == "field" and c["s"]["field"] >= 1.0
+                    and (c["payload"] or {}).get("exact_kind") == "name"):
+                return {"action": "direct", "items": [c], "top1_score": c["score"]}
     if top1 < TH_MAYBE:
         return {"action": "fail_closed", "items": [], "top1_score": top1}
     gap = top1 - (fused[1]["score"] if len(fused) > 1 else 0.0)

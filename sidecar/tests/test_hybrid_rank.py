@@ -18,10 +18,10 @@ from retrieval.hybrid_rank import (
 )
 
 
-def _field(fid="f1", s=1.0, entity="公司信息"):
+def _field(fid="f1", s=1.0, entity="公司信息", exact_kind=None):
     return {
         "field_id": fid, "entity": entity, "field_name": "n",
-        "field_value": "v", "s": s,
+        "field_value": "v", "s": s, "exact_kind": exact_kind,
     }
 
 
@@ -130,6 +130,46 @@ def test_exact_field_hit_is_direct_not_by_score():
     fused = fuse(field_hits=[_field(s=1.0)], jieba_hits=[_qa(s=0.6)])
     assert fused[0]["type"] == "qa"
     assert decide(fused)["action"] == "fail_closed"
+
+
+def test_bare_field_name_rescued_when_no_confident_qa():
+    """P6.1 裸字段名救援：精确字段名命中 + QA 融合分不过 direct 线 → 字段 direct。
+
+    v2 测出的真缺口：同 entity QA 被联动抬到 f=1.0 后 дружно 压过字段本身，
+    21 个裸字段名 10 个被 FC 错杀。字段值即答案，此时拒答不如直答。
+    """
+    weak_qa = {"key": "q", "score": 0.5, "type": "qa",
+               "s": {"field": 1.0, "jieba": 0.5, "simple": 0.0, "vec": 0.0}}
+    weak_field = {"key": "f", "score": 0.158, "type": "field",
+                  "s": {"field": 1.0, "jieba": 0.0, "simple": 0.0, "vec": 0.0},
+                  "payload": {"field_name": "n"}}
+    # payload.exact_kind 由 fuse 透传；此处手组 fused 形状直测 decide。
+    weak_field["payload"]["exact_kind"] = "name"
+    out = decide([weak_qa, weak_field])
+    assert out["action"] == "direct"
+    assert out["items"][0]["key"] == "f"
+
+    # QA 过 direct 线 → 仍以 QA 为准（twin 问答答案更丰富）。
+    strong_qa = dict(weak_qa, score=0.8)
+    out = decide([strong_qa, weak_field])
+    assert out["action"] == "direct"
+    assert out["items"][0]["key"] == "q"
+
+    # 别名精确不触发救援（别名是整句、语义宽于字段）：“退货政策”仍走正常路径。
+    alias_field = dict(weak_field)
+    alias_field["payload"] = dict(weak_field["payload"], exact_kind="alias")
+    out = decide([weak_qa, alias_field])
+    assert out["action"] == "fail_closed"
+
+
+def test_fuse_carries_exact_kind():
+    """exact_kind 出处经 fuse 透传到 payload（name > alias > 无），供 decide 救援读取。"""
+    (top,) = fuse(field_hits=[_field(exact_kind="name")])
+    assert top["payload"]["exact_kind"] == "name"
+    (top,) = fuse(field_hits=[_field(exact_kind="alias")])
+    assert top["payload"]["exact_kind"] == "alias"
+    (top,) = fuse(field_hits=[_field()])
+    assert top["payload"]["exact_kind"] is None
 
 
 def test_unavailable_route_drops_from_denominator():

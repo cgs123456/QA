@@ -219,6 +219,27 @@ async def test_vec_failure_degrades_not_breaks(demo_db):
     assert fake.calls == []
 
 
+@pytest.mark.anyio
+async def test_vec_index_empty_drops_denominator_end_to_end(demo_db):
+    """P6.1：库里无向量（非异常）→ vec 路退出分母，端到端可观测。
+
+    demo_db 编译时不带 embeddings（vec 表空，非抛错），与上例的异常路径互补：
+    “路说没找到”且“库里没向量” = 路不可用。v2 包含问“包邮门槛是多少”
+    （字段包含 s=0.8，进不了硬规则）：全分母下 top1 = 0.507 → FC；
+    剔除 vec 后分母 5.5 → 0.875 → direct（`eval-final.md` §7.8 有同题探针）。
+    若接线断开（router 没标 unavailable），本用例回到 FC 即红。
+    """
+    from retrieval.embedding import active_table
+    from retrieval.vector_search import has_vectors
+
+    db, sid = demo_db
+    assert not has_vectors(db, sid, active_table())
+    fake = FakeProvider()
+    result = await answer(db, sid, "包邮门槛是多少", fake, _zeros)
+    assert result["type"] == "direct"
+    assert fake.calls == []
+
+
 def test_select_contexts_single_point():
     items = [
         {"type": "qa", "key": "q1", "score": 0.5,

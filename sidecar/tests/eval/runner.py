@@ -22,6 +22,7 @@ def evaluate(conn, store_id: str, items: list) -> dict:
     details = []
     top3_hits = top5_hits = field_hits = scored = 0
     null_items = 0
+    field_items = field_found = 0
     ms_field = ms_fts = ms_prep = 0.0
 
     for it in items:
@@ -37,6 +38,23 @@ def evaluate(conn, store_id: str, items: list) -> dict:
         ms_field += t_field
         ms_fts += t_fts
         ranked = [h["qa_id"] for h in fts]
+
+        if it.expected_field is not None:
+            # P6.1 v2 纯字段探针：不进 Top-3 分母（ranked_qa 无 field 行），
+            # 单列“字段名命中”率。action 判定在此两级 runner 无 decide，不统计。
+            field_items += 1
+            found = any(h.get("field_name") == it.expected_field for h in field)
+            field_found += found
+            details.append(
+                {
+                    "question": it.question,
+                    "scored": False,
+                    "field_probe": True,
+                    "expected_field": it.expected_field,
+                    "field_found": found,
+                }
+            )
+            continue
 
         if it.expected_qa_id is None:
             null_items += 1
@@ -74,6 +92,8 @@ def evaluate(conn, store_id: str, items: list) -> dict:
         "n": n,
         "scored": scored,
         "null_items": null_items,
+        "field_items": field_items,
+        "field_found_rate": (field_found / field_items) if field_items else 0.0,
         "top3_rate": (top3_hits / scored) if scored else 0.0,
         "top5_rate": (top5_hits / scored) if scored else 0.0,
         "field_hit_rate": (field_hits / scored) if scored else 0.0,
@@ -98,6 +118,7 @@ def evaluate_full(conn, store_id: str, items: list, embed_fn) -> dict:
     top3 = top5 = scored = field_hits = 0
     answered = wrong = 0
     null_items = null_fc = 0
+    field_items = field_direct_ok = 0
     actions: dict = {}
     ms = {"prep": 0.0, "field": 0.0, "fts": 0.0, "vec": 0.0, "embed": 0.0, "fuse": 0.0}
     qa_docs = conn.execute(
@@ -135,6 +156,52 @@ def evaluate_full(conn, store_id: str, items: list, embed_fn) -> dict:
         actions[action] = actions.get(action, 0) + 1
         ranked_qa = [c["key"] for c in fused if c["type"] == "qa"]
         top1 = fused[0] if fused else None
+        top1_name = (
+            (top1["payload"] or {}).get("field_name")
+            if top1 is not None and top1["type"] == "field"
+            else (top1["payload"] or {}).get("standard_question")
+            if top1 is not None
+            else None
+        )
+        if it.expected_field is not None:
+            # P6.1 v2 纯字段探针：精确字段硬规则 direct 即对（top1 须为该字段本身）；
+            # 被同 entity QA 劫持答出（action!=FC 但 top1 非该字段）计答错；
+            # FC 为错杀（不计错，但拉低 field_direct_rate）。
+            # top1 取 decision 落子的 items[0]（P6.1 救援改写落子后，fused[0]
+            # 仍是排序首位——判卷必须看落子，不能看排序）。
+            field_items += 1
+            landed = decision["items"][0] if decision["items"] else top1
+            ok = (action == "direct" and landed is not None
+                  and landed["type"] == "field"
+                  and (landed["payload"] or {}).get("field_name") == it.expected_field)
+            field_direct_ok += ok
+            answered_here = action != "fail_closed" and bool(decision["items"])
+            is_wrong = answered_here and not ok
+            if answered_here:
+                answered += 1
+                wrong += is_wrong
+            details.append(
+                {
+                    "question": it.question,
+                    "scored": False,
+                    "field_probe": True,
+                    "expected_field": it.expected_field,
+                    "action": action,
+                    "top1_score": decision["top1_score"],
+                    "top1": (
+                        {"type": landed["type"], "key": landed["key"],
+                         "name": (landed["payload"] or {}).get("field_name"),
+                         "score": landed["score"]}
+                        if landed
+                        else None
+                    ),
+                    "field_ok": ok,
+                    "answered": answered_here,
+                    "wrong": is_wrong,
+                    "n_vec": len(vec),
+                }
+            )
+            continue
 
         if it.expected_qa_id is None:
             null_items += 1
@@ -190,6 +257,9 @@ def evaluate_full(conn, store_id: str, items: list, embed_fn) -> dict:
         "qa_docs": qa_docs,
         "scored": scored,
         "null_items": null_items,
+        "field_items": field_items,
+        "field_direct_ok": field_direct_ok,
+        "field_direct_rate": (field_direct_ok / field_items) if field_items else 0.0,
         "top3_rate": (top3 / scored) if scored else 0.0,
         "top5_rate": (top5 / scored) if scored else 0.0,
         "field_hit_rate": (field_hits / scored) if scored else 0.0,
