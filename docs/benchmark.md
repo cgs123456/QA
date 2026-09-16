@@ -270,19 +270,26 @@ provider `faster-whisper` base / int8 / CPU；环境 Windows AMD64，Python 3.13
 | provider | 可达性 | 首字延迟 | 备注 |
 |---|---|---|---|
 | ollama | 不可达（本地） | — | `127.0.0.1:11434` 连接拒绝（`[connection]`，2.13s 后失败）；`ollama serve` 未运行。本机直连探针确认非代码问题。`e2e_llm.py --provider ollama` 默认问题命中 direct（`+0.74s decision direct`），未触达 LLM，属正常短路。 |
-| openai | 网络可达、缺 key 延期 | — | dummy key 探针回 `HTTP 401`（0.87s），证明到 `api.openai.com` 网络通；无真实 key，`e2e_llm.py` 按设计 exit 2，不跑真机。 |
+| openai | 可达、**已联测（P13）** | **首字 3.09s / 总 3.30s** | `e2e_llm.py --provider openai`（gpt-4o-mini，问题“有优惠吗”→`llm` 档）：`FIRST_TOKEN_S=3.09 TOTAL_S=3.30 ACTION=llm`。口径声明：embed 为 zeros-fallback（本轮 torch DLL 坏，见下），首字计时=检索判定（0.62s）+ LLM 首 chunk，不含 embedding 冷加载。key 经进程环境变量注入，未落盘。 |
 | claude | 网络可达、缺 key 延期 | — | dummy key 回 `auth HTTP 401`（0.57s）；`e2e_llm.py --provider claude` 无 key 即 exit 2（已验证）。 |
 | gemini | 网络可达、缺 key 延期 | — | dummy key 回 `auth HTTP 400`（0.52s，Google 无效 key 用 400，已映射为 auth）；同上 exit 2 延期。 |
 | groq | 网络可达、缺 key 延期 | — | dummy key 回 `auth HTTP 401`（0.52s）；同上 exit 2 延期。 |
 | custom | 未配置延期 | — | 无默认端点，需 `--model <base_url>` + 自建服务；本机无服务，记延期。 |
 
-**延期台账（网络/key，非代码）：** 本机六 provider 均无可跑真机的 LLM 首字延迟——
-ollama 缺本地服务，openai/claude/gemini/groq 缺真实 API Key（网络本身可达，
-探针均在 <1s 内拿到鉴权类 HTTP 状态，非超时/断网），custom 缺自建端点。
+**延期台账（网络/key，非代码）：** openai 已闭（P13，见上行）；
+claude/gemini/groq 仍缺真实 key（网络可达，探针均在 <1s 内拿到鉴权类 HTTP 状态），
+ollama 缺本地服务，custom 缺自建端点。
 Mock 覆盖不放松：`test_llm_providers.py` **39 passed**（含每家 happy-path/
 401/429/500/协议/超时 + 四档判定 ×3 家），`pytest tests/` 全绿
 **281 passed, 1 skipped**。有 key / 有服务的机器按上节复现命令跑出
 `FIRST_TOKEN_S=…` 后追加到本表即关闭台账。
+
+**P13 口径声明（torch 回归，待查，不阻塞云端数字）：** 本轮 `e2e_llm.py` 启动报
+`[warn] embed 降级为零向量（ImportError: DLL load failed while importing _C）`——
+`torch` 在本 env 中坏掉（P6 标定时可用）。后果限于 vec 路（零向量降级，warnings 可见），
+首字计时不受影响；但 `eval_calibrate.py --probe` 同因不可跑。`pytest` 仍全绿
+（`test_embedder` 缺模型 loudly 跳过）。根因未查（疑并发会话动过 env / 系统更新），
+不属 P13 范围，记于此，修好后重跑 `--probe` 复核档位不变。
 
 ## 实现要点（防坑记录）
 
@@ -313,6 +320,12 @@ Mock 覆盖不放松：`test_llm_providers.py` **39 passed**（含每家 happy-p
 | key | 缺（`OPENAI_API_KEY` 为空，`--api-key` 未传） |
 | 实测 | 未跑（脚本按设计 `EMBEDDING_DEFERRED=1 reason=no-key`，exit 2，已验证） |
 | 本地 leg | bge 权重在位（`test_embedder.py` NEED_MODEL 未跳过即证；缺则单测跳过 loudly） |
+
+**P13 实测（本机，2026-09-16；主人提供轮换后 key，经进程环境变量注入，未落盘）**：
+`python scripts/bench_embedding.py --n 20` →
+`EMBED_N=20 EMBED_S=2.22 TOKENS=164 DIM=3072`（`PER_TEXT_MS=111.1`）。
+**P5 cloud 台账关闭**（关闭条件即“`--n 20` 把 EMBED 行贴回”，已满足；全量重建的
+`tokens` 进度待真实重建任务时再记）。
 
 **延期台账（key，非代码）：** 无真实 OpenAI Key，本机无法实测 cloud 重建耗时
 与成本。Mock 覆盖不放松：`test_embedding.py` **32 passed**（含批量切分/

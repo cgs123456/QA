@@ -434,11 +434,11 @@
 
 | 事项 | 状态 | 落点 |
 |---|---|---|
-| LLM key（openai/claude/gemini/groq） | 延期（缺真实 key） | `benchmark.md` F6.1 延期台账节 |
+| LLM key（openai/claude/gemini/groq） | **部分闭合**（openai 已收数；另三家仍缺 key） | `benchmark.md` F6.1 延期台账节 |
 | custom LLM 端点 | 未配置 | 同上表 custom 行 |
-| embedding cloud key | 延期（mock 全覆盖，`bench_embedding.py` exit 2） | `benchmark.md` Cloud embedding 节 |
+| embedding cloud key | **已闭合**（P13：`--n 20` 落数） | `benchmark.md` Cloud embedding 节 |
 | Linux keyring 真机 | 延期（mock 全覆盖） | `benchmark.md` Linux keyring 节（4 行关闭条件） |
-| Ollama（G1） | 缺本地服务 | `acceptance-m2.md` §7 / task-20 复验仍未闭 |
+| Ollama（G1 本地路径） | 缺本地服务（云端路径已闭，见 M2 §7） | `acceptance-m2.md` §7 / task-20 复验仍未闭 |
 | macOS/Linux 真机 + Tauri 壳 | 缺环境 | 同上 |
 | R19 6 样本录音 | 缺投喂 | 见本节 1b 收尾（不重复收录） |
 
@@ -1312,3 +1312,22 @@ highlight 8 = **167**。
   勘误为双格式（JSON/MD），若 PRD 回仓确有三格式导出要求则开新项（M3 §8.4）。
   **1b-HK**：`dist-sidecar` 仍旧包（批量删除守卫，挂账）；CI 已全 job 配 3.11，
   本地 py311 无 pytest 未实测（挂账）。M3 §8.5 留痕。
+- P13 终结可达/不可达矛盾 + 云端三数（2026-09-16，B 机本 shell）：
+  **机制**：TUN 透明劫持（DNS 吐 `198.18.0.46`/`fdfe::/48` 保留段、`8.8.8.8` 0–12ms 本地终结）
+  + 间歇性秒级首包抖动（api.openai.com / groq TCP 建连轮转 ~5s）。M3 的 1s 超时裸 TCP
+  探针撞抖动即判死（误判）；HTTP 层三次运行 12/12 个 401/400（对端活着并拒绝假 key），
+  与 P4 的 <1s 口径一致。**以后可达性只看 HTTP 状态码，不看裸 TCP**（`docs/network-baseline.md`
+  立档，此后所有会话引用此档；复测入口 `scripts/net_probe.py [--direct]`）。
+  注册表代理（`ProxyEnable=1`，`127.0.0.1:7897` OPEN）Python 侧等价于无代理
+  （httpx/urllib 不读注册表），显式走 7897 同样全通——代理不是变量。
+  **三数（主人提供轮换后 key，进程环境变量注入、用后即清，未落盘）**：
+  ① `e2e_llm --provider openai`（gpt-4o-mini，“有优惠吗”→llm）→
+  `FIRST_TOKEN_S=3.09 TOTAL_S=3.30 ACTION=llm`（P4 首字台账 openai 行关闭）；
+  ② `bench_embedding --n 20` → `EMBED_N=20 EMBED_S=2.22 TOKENS=164 DIM=3072`
+  （P5 cloud 台账关闭）；③ G1 云端路径：2202.3 + 3300 = **5502.3ms ≤ 6s PASS**
+  （M2 G1 关闭，援引“任一路达标即可关账”；M3 #13 改判通过、#14 改判部分通过；
+  local-first 默认不变；Ollama 本地仍缺记注）。claude/gemini/groq 仍缺 key（exit 2 未跑）。
+  **口径声明**：本轮 torch DLL 坏（`ImportError: DLL load failed while importing _C`，
+  P6 时可用），e2e embed 走 zeros-fallback（首字计时不受影响），`eval_calibrate --probe`
+  同因不可跑——新 env 回归待查，P13 范围外，已记 `benchmark.md` F6.1。
+  key 纪律：旧 key 作废（M2 §7 已记轮换）；新 key 未进任何文件（`git status` 无残留）。

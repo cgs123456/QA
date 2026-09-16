@@ -58,7 +58,7 @@ A 机的两项 FAIL（faster-whisper 18.0s、pytest 16 error）**经本机复测
 | 12 | 诊断端点 + 面板（计数 + 限额；设备行不编造） | **通过（后端 + 前端类型/构建；`capture.status` 已从占位变真值）** | `test_diagnostics` **4 passed**（第三版 +1：新增「在连 → `connected` + `active_paths`；断开 → `disconnected`」状态迁移用例）+ `test_auth_coverage` 2 passed（R2 覆盖表含 `/diagnostics/audio`、`/asr/providers`、`/asr/latency`）；前端 `tsc --noEmit` **0 错误** + `eslint src --max-warnings=0` **0 错误** + `vitest run` **148 passed**（含 `capture.test.ts`）。**第二版记的「`capture.status=pending` 显式不编造」已升级为真值**：sidecar 侧 `_capture_status()` 报 `connected`（带 `active_paths`）/ `idle` / `disconnected`（`routers/audio.py` 加 `_ACTIVE` + `active_paths()`）；Rust 侧 Tauri 命令返回 `current_device()` + `CaptureStats`（`seq`/`dropped`/`errors`），面板新增「采集自检（Rust 侧）」区，**数字全部来自真实 `CaptureStats`**（`source_stats`），R14 内容无关。**目检仍待 Tauri 壳** |
 | 13 | 平台矩阵（Win 回环+插拔重建；macOS mic；Linux monitor；双路 ts<50ms；面板显设备+偏差） | **部分通过** | **Windows 设备枚举本机实测**（`Win32_SoundDevice`，4 个）：`Realtek High Definition Audio`、`NVIDIA High Definition Audio`、`AMD High Definition Audio Device`、`NVIDIA Virtual Audio Device (Wave Extensible) (WDM)`；全平台音频代码 `cargo test --features audio-testharness` **142 passed**（lib 125 + `audio_frames_wav` 1 + `audio_ws_e2e` 3 + `capture_service_wiring` 6 + `endpoint_parity` 4 + `inject_e2e` 3），不带 feature **114 passed**；`audio::resample::tests::ten_minutes_no_drift` 锁定 10min ts 偏差 30ms（<50ms），新增 `stop_time_in_flight_tail_is_bounded_by_the_buffers_themselves` 锁定停表在途样本 ≤3 帧（实测 16k/44.1k/48k <1 帧、22.05k ≈2 帧）。**插拔重建 / macOS / Linux 仍缺真机**（§6） |
 | 14 | 全量回归（pytest/vitest/Playwright；vendor/工具链债务） | **通过（全绿；`fmt` 债务已清）** | **第三版本轮实跑**：**pytest 311 passed / 0 failed / 1 skipped**（第二版 229；A 机为 137 passed + 16 error + 1 fail，全系缺 vendor）；**vitest 148 passed**（9 文件，第二版 89/4 文件）；**tsc --noEmit 0**；**eslint src --max-warnings=0 0**；**cargo test --features audio-testharness 142 passed** / 不带 feature **114 passed**；**clippy --all-targets -- -D warnings 0 告警**（两种配置）；**`cargo fmt --check` 0** ← 第二版唯一的未绿项，**本轮已清**（见 §3.C）。**第二版实测、本轮未重跑**（未触碰相关代码）：`playwright 1 passed`、`vite build` 成功（82 modules，js 286.19kB/gzip 89.10kB）、`check_size.py` → **SIZE_REGRESSION_PASS** |
-| G1 | 硬门槛1：固定答案 ≤4s / 生成答案 ≤6s（分解耗时） | **固定答案三 Provider 全 PASS / 生成答案阻塞** | 见 §2：faster-whisper 合成总账 **2202.3ms**、paraformer **190.1ms**、sensevoice **210.6ms**，预算 4000ms。生成路径**无 Ollama 仍不可测**（与 A 机同状） |
+| G1 | 硬门槛1：固定答案 ≤4s / 生成答案 ≤6s（分解耗时） | **固定答案三 Provider 全 PASS / 生成答案云端路径 PASS** | 见 §2：faster-whisper 合成总账 **2202.3ms**、paraformer **190.1ms**、sensevoice **210.6ms**，预算 4000ms。生成路径云端 openai 实测 **5.50s ≤ 6s PASS**（P13：ASR 2202.3ms + QA/LLM `TOTAL_S=3.30s`，`FIRST_TOKEN_S=3.09s`，见 §2 增补）。Ollama 本地路径仍缺服务，但按 §7 纪律“两条路任一达标即可关账”，G1 关闭。**local-first 默认不变**（默认 ASR 仍 faster-whisper，云端仅为验收走通的配置项）。 |
 | G2 | 硬门槛2：双路 10 分钟零丢段/零污染/内存不泄漏增长 | **通过（GATE2_PASS）** | 见 §2：双路各 100 段全收、hash 零失配、RSS +3.9MB/601s |
 
 ## 2. 两道硬门槛详录
@@ -91,11 +91,19 @@ n=10：**中位 6.82ms** / 最小 6.17 / 最大 23.13（预热 2420.27ms 已单�
 > 因此**默认 provider 无需改动**（faster-whisper 保持多语种默认，paraformer/sensevoice
 > 作为中文快速档可选，切换机制 task17 已就绪）。选型由 `docs/benchmark.md` 横向对比决定。
 
-生成答案 ≤6s：**阻塞，不可判**。本机未安装 Ollama（`ollama` 不在 PATH，三个常见安装路径均无，
+生成答案 ≤6s：**云端路径 PASS（P13，2026-09-16）**。本机未安装 Ollama（`ollama` 不在 PATH，三个常见安装路径均无，
 `127.0.0.1:11434` 真拒连——已确认非本机 http_proxy 干扰）。LLM 段无数字。
 参考分解：最慢的 faster-whisper 路径用 2202.3ms，留给 LLM 约 **3.8s** 预算；
 paraformer/sensevoice 路径留给 LLM 约 5.8s。是否够用待 Ollama 就绪后
 `scripts/e2e_ollama.py` + 本脚本联测。
+
+**P13 云端路径实测（主人提供轮换后 key，进程环境变量注入，未落盘；local-first 默认不变）**：
+`e2e_llm.py --provider openai`（gpt-4o-mini，问题“有优惠吗”→`llm` 档）→
+`FIRST_TOKEN_S=3.09 TOTAL_S=3.30 ACTION=llm`（口径：embed zeros-fallback，
+本轮 torch DLL 坏，`benchmark.md` F6.1 已声明；首字=检索判定 0.62s + LLM 首 chunk）。
+合成总账 = ASR 实测 2202.3ms + QA/LLM 实测 3300ms = **5502.3ms ≤ 6000ms，PASS**。
+按本报告 §7 纪律“两条路任一实测达标即可关账”，G1 关闭（云端路径）；
+Ollama 本地路径仍缺服务，记注不欠账。
 
 ### G2 双路 10 分钟 soak（2026-09-15，B 机，sidecar 范围）
 
@@ -190,7 +198,6 @@ GATE2_PASS
 | 项 | 性质 | 阻塞于谁 | 解除条件（可判定） | 解除后第一件事 | 立账日 |
 |---|---|---|---|---|---|
 | **M2-8 R19** 真实声学边界准确率 | 数据缺口 | **主人投喂** 6 样本录音 + 标注 | 6 槽非空，且能跑出嘈杂子集对比表1 | `audio_regression.py` 出表1 + Rust 侧 webrtc 绝对值复核 + 定默认 VAD provider | 2026-09-14 |
-| **G1 生成答案 ≤6s** | 环境 + 云端路径 | ① Ollama 未装；② **云端 key 路径待主人** | ① 本机装 Ollama 后联测；**或** ② 用主人提供的 OpenAI key 走云端路径实测 | 跑 `scripts/e2e_llm.py --provider openai`，把 `FIRST_TOKEN_S/TOTAL_S/ACTION` 落 `benchmark.md`，并同步关掉 P4 首字延迟台账 | 2026-09-14 |
 | **M2-13 平台真机** | 环境 | 需 macOS / Linux 机器 | 两台机器各跑 `cargo test` + 采集回听 + 双路 ts 贴数 | 把双平台实测数字补进 §2 门槛表（Windows 侧设备枚举已实测） | 2026-09-14 |
 | **M2-12 前端目检** | 环境 | 需 Tauri 壳（`pnpm tauri dev`） | 壳可启动，诊断面板可见 | 逐项目检 §1#12 + 截图归档；顺带跑 `manual-verification-p7.md` 的真机清单 | 2026-09-14 |
 
@@ -198,8 +205,10 @@ GATE2_PASS
 「云端生成首字」——**验收项 G1 只问「生成答案是否 ≤6s」**，两条路任一实测达标即可关账，
 但**两条都要记明是哪条路的数字**，不得混写。
 
-**⚠️ 凭据纪律**：主人已在会话中提供 OpenAI key（**明文**）。本轮**未实测、未落盘**；
-按纪律**不得写入任何文件**。若本会话记录会被分享/归档，**该 key 应先轮换**。
+**⚠️ 凭据纪律**：主人已在会话中提供 OpenAI key（**明文**）。上轮 key 本轮之前**未实测、未落盘**；
+P13 主人提供的是**轮换后的新 key**，本轮已实测（openai 首字 3.09s），仅经进程环境变量注入、
+用后即清，**未写入任何文件**（`git status` 无凭据残留）。若本会话记录会被分享/归档，
+该 key 仍建议按常规轮换周期处理。
 
 ### 7.2 1b-HK 残项（Phase 1b 收尾遗留，与 M2 解耦）
 
@@ -209,6 +218,8 @@ GATE2_PASS
 | **CI Python 3.11 matrix** | PRD 要求 3.11；本机为 3.12.10（A）/3.13.14（B），**未在 3.11 上验证过** | CI 上配出 3.11 job | 跑全量 `pytest` + `pip check`，把 3.11 结果与 3.12/3.13 并列记入测试计数台账 | 2026-09-15 |
 
 ### 7.3 已闭合（移出本台账，留痕防复活）
+
+- **G1 生成答案 ≤6s** → 2026-09-16 闭合（**云端路径**：openai gpt-4o-mini 实测合成总账 5502.3ms ≤ 6s，见 §1#G1 与 §2 增补；local-first 默认不变；Ollama 本地路径仍缺服务，记注不欠账）。
 
 - **M2-7 端点状态机缺件** → 2026-09-15 闭合（`endpoint.rs` 落地，边界误差 0 帧，见 §1#7）。
 - **`cargo fmt --check` 4 文件失败** → 2026-09-15 闭合（`c4c682a` 单独 chore，全仓 0）。

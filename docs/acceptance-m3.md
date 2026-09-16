@@ -2,7 +2,7 @@
 
 > 执行时间：2026-09-15，B 机（AMD Ryzen 5 5500 / 12 逻辑核 / 31.9GB / Python 3.13.14 / cargo 1.98.1 / pnpm 9 / node v20.17.0 缺）。
 > 执行方式：本机可跑项全部实跑（命令 + 输出摘录见下）；需外部输入项如实标记，不估分、不借数。
-> 结论：**11 通过 / 2 部分通过 / 1 未达标 / 1 待人工**。
+> 结论：**12 通过 / 3 部分通过 / 1 未达标（R19 缺数据）**（P13 更新：#13 改判通过、#14 改判部分通过）。
 > `m3-core-features` tag **暂缓**（剩余阻塞项均非「缺代码」，见 §4）。
 
 ## 0. 机器与可比性
@@ -35,8 +35,8 @@
 | 10 | **诊断端点 + 面板**（计数/限额/设备行真值/`capture.status` 真实） | **通过** | `pytest tests/test_diagnostics.py tests/test_diagnostics_degrade.py -v` **4+6=10 passed**（新增状态迁移：在连 `connected+active_paths` / 断开 `disconnected`）；Rust 侧 Tauri 命令返回 `current_device()` + `CaptureStats(seq/dropped/errors)`；前端 `capture.test.ts` 28 用例（类型层面）；**目检仍待 Tauri 壳**。 |
 | 11 | **全量回归**（pytest/cargo/clippy/fmt；vendor/工具链零债务） | **通过** | **pytest 393 passed / 1 skipped**（382 + `test_highlight` 11；skip 同源 `webrtcvad` 可选依赖）；**cargo test --lib 146 passed** / `--features audio-testharness 160 passed**；**clippy --all-targets -- -D warnings 0 告警**；**fmt --check 0**；vendor 就位。 |
 | 12 | **R19 嘈杂子集 VAD/端点边界准确率**（真实声学） | **未达标（缺数据）** | `sidecar/tests/audio_samples/manifest.json` 6 槽全 `missing`。harness 本机双 provider 已定标（`audio_regression.py --self-test` → **SELFTEST_PASS**），样本一到即出数。 |
-| 13 | **G1 生成答案 ≤6s**（分解耗时，固定/生成双路） | **部分通过** | 固定答案三 Provider 全 PASS（faster-whisper **2202.3ms** / paraformer **190.1ms** / sensevoice **210.6ms**，含 QA 6.82ms，预算 4000ms，见 M2 §2）；**生成答案阻塞**：本机无 Ollama，且 **外网 TCP 不通**（`8.8.8.8:443` / `api.openai.com:443` 均 Timeout），云端 key 路径亦不可联测。 |
-| 14 | **云端 Provider 真机联调**（OpenAI/Anthropic/Gemini 首字/总耗时/动作） | **未达标（网络不可达）** | TCP 探针 `8.8.8.8:443` / `1.1.1.1:443` / `api.openai.com:443` 均 `TimeoutError`。未触碰任何 key/secret。 |
+| 13 | **G1 生成答案 ≤6s**（分解耗时，固定/生成双路） | **通过（云端路径，P13）** | 固定答案三 Provider 全 PASS（faster-whisper **2202.3ms** / paraformer **190.1ms** / sensevoice **210.6ms**，含 QA 6.82ms，预算 4000ms，见 M2 §2）；生成答案云端 openai 实测 **5.50s ≤ 6s PASS**（P13：ASR 2202.3ms + QA/LLM `TOTAL_S=3.30s`，`FIRST_TOKEN_S=3.09s ACTION=llm`，gpt-4o-mini，`benchmark.md` 已落数；Ollama 本地路径仍缺服务，但按 M2 §7 纪律任一路达标即可关账）。**local-first 默认不变**。 |
+| 14 | **云端 Provider 真机联调**（OpenAI/Anthropic/Gemini 首字/总耗时/动作） | **部分通过（openai 已闭，P13）** | 网络可达已正名（`docs/network-baseline.md` 取代旧 TCP 超时结论，见 §2.2 增补）。openai：`FIRST_TOKEN_S=3.09 TOTAL_S=3.30 ACTION=llm`（P13，轮换后 key，进程注入未落盘）；claude/gemini/groq 仍缺 key（exit 2 未跑）；ollama 缺本地服务；custom 未配。 |
 
 ## 2. 两项必须如实列示
 
@@ -47,7 +47,7 @@
 | **endpoint.rs** 状态机 | **已闭合**（2026-09-15，M2 §1#7 第三版改判） | —— | 已完成：`cargo test --test endpoint_parity` 4 passed（18309 帧 / 89 段 / 边界误差 0 帧） |
 | **采集→VAD→端点→uplink→sidecar** 接线 | **已闭合**（C1b，注入 E2E `inject_e2e` 3 passed，双路互不污染） | —— | 已完成：真 VAD 决策 → 真端点 → 真 uplink → 真 sidecar |
 | **R19 嘈杂子集** | **未闭合**（6 样本槽全空） | 主人投喂 6 段带标注 wav（见 `sidecar/tests/audio_samples/README.md`） | `audio_regression.py` 出表1 + Rust 侧 webrtc 绝对值复核 + 定默认 provider |
-| **G1 生成答案 ≤6s** | **固定答案 PASS / 生成阻塞** | ① 本机装 Ollama 后联测；**或** ② 主人提供云端 key 且网络可达后走云端路径 | 跑 `scripts/e2e_llm.py --provider {ollama,openai}`，把 `FIRST_TOKEN_S/TOTAL_S/ACTION` 落 `benchmark.md`，并同步关掉 P4 首字延迟台账 |
+| **G1 生成答案 ≤6s** | **云端路径 PASS（P13）** | 合成总账 2202.3 + 3300 = **5502.3ms ≤ 6s**（`FIRST_TOKEN_S=3.09`，openai gpt-4o-mini；Ollama 本地仍缺，按 M2 §7 纪律关账） | 跑 `scripts/e2e_llm.py --provider {ollama,openai}`，把 `FIRST_TOKEN_S/TOTAL_S/ACTION` 落 `benchmark.md`，并同步关掉 P4 首字延迟台账 |
 | **tag m2-audio-pipeline** | **暂缓**（剩余 4 项，全非「缺代码」） | 见 M2 §4：R19 / G1 / 平台真机 / 前端目检 | 用户明确指示或外部输入到位后再判 |
 
 > 关键纪律：**R19 与 C1b 注入 E2E 不能混为一谈**——C1b 用合成语音证明「管线正确」（边界误差 0 帧），R19 要真实声学环境下的边界准确率，两者口径不同。
@@ -61,6 +61,11 @@
 - TCP api.openai.com:443 → TimeoutError (1s)
 结论：外网不可达。任何云端 LLM/Embedding 路径在本机**无法实测**。
 未发送任何 HTTP 请求，未触碰任何 API key/secret。
+
+**P13 增补：上段结论作废**（仪器误判）。`docs/network-baseline.md` 已立档：
+1s 超时裸 TCP 探针撞上 TUN 首包抖动即判死；HTTP 层三次运行 12/12 个 401/400
+（对端活着并拒绝假 key），云端四家**可达**。此后可达性只看 HTTP 状态码。
+云端联测缺的不再是网络，是 key——P13 已用轮换后 key 收掉 openai 三数（#13/#14）。
 ```
 
 > 如需在本机闭合 P5 cloud embedding / G1 生成答案 / M3-14 云端联调，**必须先解决网络可达性**（代理/防火墙/策略路由），再提供凭据。
@@ -73,7 +78,7 @@
 ### 3.B 环境/真机阻塞 4 项
 | 项 | 阻塞性质 | 解除条件 |
 |---|---|---|
-| G1 生成答案（云端路径） | 网络不可达 + 无 key | 网络可达 + 主人提供 key（或本机装 Ollama） |
+| G1 生成答案（云端路径） | ~~网络不可达 + 无 key~~ → **P13 已闭**（网络可达正名 + openai 5.50s PASS） | 网络可达 + 主人提供 key（或本机装 Ollama） |
 | P5 cloud embedding 联测 | 网络不可达 | 网络可达 + key |
 | M2-13 平台真机 | 缺 macOS/Linux 机器 | 各跑 `cargo test` + 采集回听 + 双路 ts |
 | 前端页面目检 | 缺 Tauri 壳 | `pnpm tauri dev` 可启动，逐项走查 |
@@ -85,7 +90,7 @@
 | 阻塞项 | 性质 | 清除条件 | 清除动作 |
 |---|---|---|---|
 | R19 真实声学 | 数据缺口 | 6 样本到位 | `audio_regression.py` 产出表1 + 定默认 |
-| G1 生成答案（云端） | 环境+网络+凭据 | 网络可达 + key / 或 Ollama | 跑联测脚本落数 |
+| G1 生成答案（云端） | ~~环境+网络+凭据~~ → **P13 已闭**（openai 合成总账 5502.3ms ≤ 6s；local-first 默认不变） | 网络可达 + key / 或 Ollama | 跑联测脚本落数 |
 | 平台真机 | 环境 | macOS/Linux 机器 | 补实测数字 |
 | 前端目检 | 环境 | Tauri 壳 | 逐项目检 + 截图 |
 
@@ -114,7 +119,6 @@
 | 项 | 性质 | 阻塞于谁 | 解除条件（可判定） | 解除后第一件事 | 立账日 |
 |---|---|---|---|---|---|
 | **R19 真实声学边界** | 数据缺口 | 主人投喂 | 6 槽非空 + 能跑出对比表1 | `audio_regression.py` 出表1 + 复核 + 定默认 | 2026-09-14 |
-| **G1 生成答案 ≤6s（云端）** | 环境+网络+凭据 | ① 网络可达；② 主人提供 key | 云端联测 ≤6s（首字/总耗时/动作落数） | 落 `benchmark.md` + 关 P4 首字台账 | 2026-09-14 |
 | **平台真机** | 环境 | 需 macOS/Linux | 两台机器各跑全套 + 双路 ts | 补 §2 门槛表 | 2026-09-14 |
 | **前端目检** | 环境 | 需 Tauri 壳 | 壳可启动 + 面板可见 | 逐项走查 + 截图归档 | 2026-09-14 |
 
@@ -126,6 +130,8 @@
 | **CI Python 3.11 matrix** | PRD 要求 3.11；本机 3.12/3.13，**未在 3.11 验证** | CI 配出 3.11 job | 跑全量 pytest + pip check，并列记入测试计数台账 | 2026-09-15 |
 
 ### 7.3 已闭合（移出台账，留痕防复活）
+
+- **G1 生成答案 ≤6s（云端）** → 2026-09-16 闭合（P13：openai 合成总账 5502.3ms ≤ 6s + P4 首字台账 openai 行关闭 + P5 cloud 台账关闭；local-first 默认不变）。
 
 - **M2-7 端点状态机缺件** → 2026-09-15 闭合（`endpoint.rs` 落地，边界误差 0 帧，M2 §1#7）。
 - **`cargo fmt --check` 4 文件失败** → 2026-09-15 闭合（`c4c682a` 单独 chore，全仓 0）。
