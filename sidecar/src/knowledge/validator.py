@@ -58,7 +58,11 @@ def validate_qa_items(raw_items: list) -> tuple:
 
 
 def validate_field_items(raw_items: list) -> tuple:
-    """返回 (valid, stats)。valid 项含 entity/field_name/field_value/aliases。"""
+    """返回 (valid, stats)。valid 项含 entity/field_name/field_value/aliases/id？。
+
+    id 与 QA 同规则透传（P9 导出恢复需要行级稳定；缺 id 时 compiler 生成；
+    显式空串 id 记 invalid）。既有导入路径从不带 id，行为不变。
+    """
     valid_by_key: dict = {}
     invalid = 0
     dup = 0
@@ -72,6 +76,10 @@ def validate_field_items(raw_items: list) -> tuple:
         if not entity or not name or not value:
             invalid += 1
             continue
+        fid = raw.get("id")
+        if fid is not None and not _clean(fid):
+            invalid += 1
+            continue
         aliases = raw.get("aliases") or []
         aliases = [_clean(a) for a in aliases if _clean(a)] if isinstance(
             aliases, list
@@ -79,12 +87,15 @@ def validate_field_items(raw_items: list) -> tuple:
         key = (entity, name)
         if key in valid_by_key:
             dup += 1
-        valid_by_key[key] = {
+        item = {
             "entity": entity,
             "field_name": name,
             "field_value": value,
             "aliases": aliases,
         }
+        if fid is not None:
+            item["id"] = _clean(fid)
+        valid_by_key[key] = item
     valid = list(valid_by_key.values())
     stats = {
         "total": len(raw_items or []),

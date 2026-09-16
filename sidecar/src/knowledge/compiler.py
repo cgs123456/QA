@@ -76,6 +76,11 @@ def compile_store(
         taken_ids = {
             r[0] for r in conn.execute("SELECT id FROM qa_pairs").fetchall()
         }
+        # qa/field 是独立 id 命名空间（不同表各自主键）：分开取，互不干扰。
+        # 快照里同串 id 同时出现在 QA 行与字段行是合法的，合在一起查会误换新。
+        taken_fids = {
+            r[0] for r in conn.execute("SELECT id FROM fields").fetchall()
+        }
         for item in qa_items or []:
             q = item["standard_question"]
             if q not in existing_qa:
@@ -136,7 +141,12 @@ def compile_store(
                 )
                 stats["field_overwritten"] += 1
             else:
-                fid = _new_id()
+                # id 透传（P9 导出恢复行级稳定）：空闲即保留，被占则换新 id，
+                # 与上 QA id 策略同源（同库重导走 update 分支，不会到这里）。
+                fid = item.get("id") or _new_id()
+                if fid in taken_fids:
+                    fid = _new_id()
+                taken_fids.add(fid)
                 conn.execute(
                     "INSERT INTO fields(id, store_id, entity, field_name,"
                     " field_value, aliases) VALUES (?,?,?,?,?,?)",

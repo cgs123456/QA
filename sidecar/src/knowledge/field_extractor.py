@@ -43,14 +43,15 @@ def extract(field_items: list, vocab: dict) -> tuple:
         canonical, matched = normalize_field_name(item["field_name"], vocab)
         if not matched:
             miss += 1
-        out.append(
-            {
-                "entity": item["entity"],
-                "field_name": canonical,
-                "field_value": item["field_value"],
-                "aliases": build_aliases(
-                    canonical, vocab, item.get("aliases") or []
-                ),
-            }
-        )
+        row = {
+            "entity": item["entity"],
+            "field_name": canonical,
+            "field_value": item["field_value"],
+            "aliases": build_aliases(
+                canonical, vocab, item.get("aliases") or []
+            ),
+        }
+        if item.get("id") is not None:
+            row["id"] = item["id"]  # P9：行 id 透传（缺席则 compiler 生成）
+        out.append(row)
     return out, miss

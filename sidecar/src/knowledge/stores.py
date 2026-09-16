@@ -108,6 +108,28 @@ def get_current_store_id(conn):
     return row[0] if row else None
 
 
+def clear_store_content(conn, store_id: str) -> None:
+    """清空某库全部内容（问答/字段/向量），保留 store 行本身。
+
+    覆盖式恢复（exporter.restore_store overwrite=True）用：与 delete_store
+    同样的级联手工清理，只是最后不删 stores 行。短事务内完成（R6）。
+    """
+    get_store(conn, store_id)  # 不存在即抛
+    with write_lock, conn:
+        conn.execute(
+            "DELETE FROM vec_qa_local WHERE qa_id IN"
+            " (SELECT id FROM qa_pairs WHERE store_id=?)",
+            (store_id,),
+        )
+        conn.execute(
+            "DELETE FROM vec_qa_cloud WHERE qa_id IN"
+            " (SELECT id FROM qa_pairs WHERE store_id=?)",
+            (store_id,),
+        )
+        conn.execute("DELETE FROM qa_pairs WHERE store_id=?", (store_id,))
+        conn.execute("DELETE FROM fields WHERE store_id=?", (store_id,))
+
+
 def delete_store(conn, store_id: str) -> None:
     """级联删除：vec 表无 FK 级联，需手工先清；qa/fields/aliases 由 FK+触发器处理。"""
     get_store(conn, store_id)  # 不存在即抛
