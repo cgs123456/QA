@@ -47,6 +47,23 @@ jobs:
             librsvg2-dev patchelf
       - run: cargo test --manifest-path src-tauri/Cargo.toml --test companion_test
 
+  rust-test-lib:
+    # 同上：`--lib` 的 163 例本机 Windows 全绿，但**从未在 Linux 上跑过**
+    # （含音频采集/重采样/键盘钩子的 cfg 分支，平台差异风险真实存在）。
+    # 先挂 `continue-on-error` 观察几个 PR：稳定了就摘掉它，红了就按平台裁剪，
+    # 而不是一上来就把整个 CI 变红。
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: system deps (linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
   pytest:
     runs-on: ubuntu-latest
     steps:

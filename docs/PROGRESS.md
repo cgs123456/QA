@@ -1937,6 +1937,11 @@ highlight 8 = **167**。
   **41 passed**。
   **文件清单**：改动 `.github/workflows/ci.yml`、`src-tauri/tests/companion_test.rs`、
   `docs/companion-security.md`、`docs/PROGRESS.md`。
+  **续**：本机 `cargo test --lib` 实测 **163/163 通过**（Windows）。据此再加一个
+  `rust-test-lib` job 跑 `cargo test --lib`，但**挂 `continue-on-error: true`**：
+  这 163 例从未在 Linux 上跑过（含音频采集/重采样、键盘钩子的 cfg 分支，平台差异风险真实存在），
+  先观察几个 PR —— 稳定了摘掉开关，红了按平台裁剪，而不是一上来把整个 CI 变红。
+  yaml 已用 `yaml.safe_load` 校验可解析（7 个 job）。
 
 - **清掉 vitest 的 4 例红灯（非 S8，但挡着 CI）**：
   - `src/pages/Knowledge.test.tsx`（4 例）：`Knowledge` 页会调 `useTemplates()`，
