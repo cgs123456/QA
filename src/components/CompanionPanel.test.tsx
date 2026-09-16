@@ -154,7 +154,8 @@ describe("伴侣纪律", () => {
   });
 
   it("面板不跑第二份 useLiveQA（二屏只读镜像）", async () => {
-    const source = await import("./CompanionPanel?raw");
+    // 扩展名必须写全：Vite 不替 `?raw` 补扩展名（`./CompanionPanel` 在 Linux 上 ENOENT）。
+    const source = await import("./CompanionPanel.tsx?raw");
     expect(source.default).not.toMatch(/useLiveQA|askQuestion/);
   });
 });

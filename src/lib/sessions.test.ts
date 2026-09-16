@@ -9,7 +9,9 @@ import { describe, expect, it } from "vitest";
 
 // Vite 的 `?raw`：把源码当字符串读进来做**源码级**断言（R21）。
 // 用 `?raw` 而不是 `node:fs` —— 这是浏览器项目，tsconfig 里没有 node 类型。
-import sessionsSrc from "./sessions?raw";
+// 扩展名必须写全：`./sessions?raw` 在 Linux 上报 ENOENT（Vite 不会替 `?raw` 补扩展名，
+// Windows 上碰巧能解析）。CI 是 ubuntu，所以这条会真红。
+import sessionsSrc from "./sessions.ts?raw";
 import sessionDetailSrc from "../components/SessionDetail.tsx?raw";
 
 import type { SessionEvent, SessionSummary } from "./api";

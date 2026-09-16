@@ -28,6 +28,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # clippy **也要编译 crate**（跑 build script），所以 Linux 开发库一样不能少；
+      # 少了就是 exit 101，而且报错长得像"代码有问题"，其实是缺依赖。
+      - name: system deps (linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libasound2-dev libgtk-3-dev libasound2-dev libgtk-3-dev
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
   rust-test:
@@ -44,7 +51,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf
+            librsvg2-dev patchelf libasound2-dev libgtk-3-dev
       - run: cargo test --manifest-path src-tauri/Cargo.toml --test companion_test
 
   rust-test-lib:
@@ -61,7 +68,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf
+            librsvg2-dev patchelf libasound2-dev libgtk-3-dev
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
   pytest:
@@ -123,7 +130,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf
+            librsvg2-dev patchelf libasound2-dev libgtk-3-dev
       - run: python sidecar/build.py
       - run: pnpm exec tauri build
 

@@ -1943,6 +1943,25 @@ highlight 8 = **167**。
   先观察几个 PR —— 稳定了摘掉开关，红了按平台裁剪，而不是一上来把整个 CI 变红。
   yaml 已用 `yaml.safe_load` 校验可解析（7 个 job）。
 
+- **CI 首次真跑之后的复盘（同日，run #11/#12）**：
+  **前提事实**：这个仓库的 CI **长期没有真正跑起来过** —— run #10（bef42d7，2026-09-15）所有
+  node 相关 job 都死在 `pnpm/action-setup@v4` 的 "No pnpm version is specified"，
+  根本没跑到 clippy / vitest。所以「Linux 上绿不绿」此前是个未知数，加了 Rust job 才把它照出来。
+  **暴露出来的问题**：
+  1. **三个 Rust job 同时 exit 101**（`lint` 的 clippy、`rust-test`、`rust-test-lib`）——
+     共同点是都要编译 crate → 最可能缺 Linux 开发库：`cpal` 走 ALSA，缺 `libasound2-dev`
+     时 `alsa-sys` 的 build script 直接失败。**已给 4 处 apt 步骤补
+     `libasound2-dev libgtk-3-dev`**（含 build-tauri）。**待 CI 验证**（本机无 Linux：
+     WSL 被安全策略拦截，日志需 GitHub 认证拉不到 → 这是按假设修，不是按日志修）。
+  2. **vitest 在 Linux 上 ENOENT**：两处 `?raw` 导入**漏写扩展名** ——
+     `src/lib/sessions.test.ts` 的 `./sessions?raw`、`CompanionPanel.test.tsx` 的
+     `./CompanionPanel?raw`。Windows 上 Vite 会替你补扩展名，Linux 不会 → 真红。
+     改成 `./sessions.ts?raw` / `./CompanionPanel.tsx?raw`，本机 39 例通过。
+  3. **`pytest` 与 `build-tauri (ubuntu)` 是既有红灯，不是本次引入**：run #10 就已失败，
+     且都卡在 `pip install -r sidecar/requirements-lock.txt`（step 7）。**未动**。
+  **文件清单**：`.github/workflows/ci.yml`、`src/lib/sessions.test.ts`、
+  `src/components/CompanionPanel.test.tsx`、`docs/PROGRESS.md`。
+
 - **清掉 vitest 的 4 例红灯（非 S8，但挡着 CI）**：
   - `src/pages/Knowledge.test.tsx`（4 例）：`Knowledge` 页会调 `useTemplates()`，
     没 mock 也没 `QueryClientProvider` → `useQuery` 直接抛错。按本文件既有风格**补 mock**
