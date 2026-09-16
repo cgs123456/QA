@@ -60,6 +60,22 @@ vi.mock("../hooks/useImport", () => ({
   }),
 }));
 
+// S7 模板系统：Knowledge 页会拉模板列表，但本文件测的是 P1 审核流。
+// 不 mock 的话 useQuery 会因为没有 QueryClientProvider 直接抛错（模板那一路与本用例无关）。
+vi.mock("../hooks/useTemplates", () => ({
+  useTemplates: () => ({ templates: [], isLoading: false, isError: false }),
+  useCreateFromTemplate: () => ({
+    mutateAsync: vi.fn().mockResolvedValue(undefined),
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  useCreateTemplate: () => ({
+    mutateAsync: vi.fn().mockResolvedValue(undefined),
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+}));
+
 const EXCEL_DATA: ExcelPreview = {
   format: "excel",
   filename: "qa.xlsx",

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useKnowledgeStore } from "../stores/knowledgeStore";
 import { useStore } from "../hooks/useStore";
 import { useImportCommit, useImportPreview } from "../hooks/useImport";
+import { useTemplates, useCreateFromTemplate, useCreateTemplate } from "../hooks/useTemplates";
 import { ColumnMapping } from "../components/ColumnMapping";
 import { ReviewPanel } from "../components/ReviewPanel";
 import {
@@ -18,6 +19,8 @@ import {
   type ExcelCommitMapping,
   type ImportFormat,
 } from "../lib/importFlow";
+import type { TemplatePayload } from "../lib/api";
+import { TemplateWizard } from "../components/TemplateWizard";
 
 export function Knowledge() {
   const { list, create, switchStore, remove, compile } = useStore();
@@ -26,6 +29,17 @@ export function Knowledge() {
   const [importText, setImportText] = useState("");
   const [importFormat, setImportFormat] = useState<"markdown" | "json">("markdown");
   const [importTarget, setImportTarget] = useState("");
+
+  // ---- S7 模板系统 ----
+  // `isLoading` 暂未使用：先不取，免得 tsc 报未读变量（CI 跑 `tsc --noEmit`）。
+  const { templates } = useTemplates();
+  const createFromTemplate = useCreateFromTemplate();
+  const createTemplate = useCreateTemplate();
+  const [showTemplateWizard, setShowTemplateWizard] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [newStoreName, setNewStoreName] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
 
   // ---- P1 审核流（Excel/PDF；.md/.json 直连流程不动） ----
   const preview = useImportPreview();
@@ -163,6 +177,60 @@ export function Knowledge() {
     });
   }
 
+  // S7 模板向导（模态框式）
+  if (showTemplateWizard) {
+    return (
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <div style={{ background: 'white', padding: 24, borderRadius: 8, minWidth: 500, maxWidth: 700, maxHeight: '90vh', overflow: 'auto' }}>
+          <TemplateWizard
+            templates={templates}
+            selectedTemplateId={selectedTemplateId}
+            onTemplateSelect={setSelectedTemplateId}
+            newStoreName={newStoreName}
+            onStoreNameChange={setNewStoreName}
+            onCreateFromTemplate={async (templateId: string, storeName: string) => {
+              try {
+                setTemplateError(null);
+                await createFromTemplate.mutateAsync({ template_id: templateId, name: storeName });
+                setShowTemplateWizard(false);
+                setSelectedTemplateId("");
+                setNewStoreName("");
+              } catch (e: unknown) {
+                setTemplateError(e instanceof Error ? e.message : "创建失败");
+              }
+            }}
+            onCreateCustomTemplate={async (templateName: string, description: string, category: string, payload: TemplatePayload) => {
+              try {
+                setTemplateError(null);
+                setSavingTemplate(true);
+                await createTemplate.mutateAsync({
+                  name: templateName,
+                  description,
+                  category,
+                  payload,
+                  is_preset: false,
+                });
+                setSavingTemplate(false);
+                alert("自定义模板保存成功");
+              } catch (e: unknown) {
+                setTemplateError(e instanceof Error ? e.message : "保存失败");
+                setSavingTemplate(false);
+              }
+            }}
+            onClose={() => {
+              setShowTemplateWizard(false);
+              setSelectedTemplateId("");
+              setNewStoreName("");
+              setTemplateError(null);
+            }}
+            templateError={templateError}
+            saving={savingTemplate}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h2>知识管理</h2>
@@ -199,6 +267,23 @@ export function Knowledge() {
             </li>
           ))}
         </ul>
+
+        {/* S7: 模板创建向导入口 */}
+        <div style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            data-testid="open-template-wizard"
+            onClick={() => {
+              setSelectedTemplateId("");
+              setNewStoreName("");
+              setTemplateError(null);
+              setShowTemplateWizard(true);
+            }}
+          >
+            从模板创建知识库
+          </button>
+        </div>
+
         <form
           className="row"
           onSubmit={(e) => {
@@ -217,7 +302,7 @@ export function Knowledge() {
             placeholder="新知识库名称"
           />
           <button data-testid="store-create" type="submit" disabled={create.isPending}>
-            创建
+            创建空知识库
           </button>
         </form>
       </div>

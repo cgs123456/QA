@@ -1937,3 +1937,29 @@ highlight 8 = **167**。
   **41 passed**。
   **文件清单**：改动 `.github/workflows/ci.yml`、`src-tauri/tests/companion_test.rs`、
   `docs/companion-security.md`、`docs/PROGRESS.md`。
+
+- **清掉 vitest 的 4 例红灯（非 S8，但挡着 CI）**：
+  - `src/pages/Knowledge.test.tsx`（4 例）：`Knowledge` 页会调 `useTemplates()`，
+    没 mock 也没 `QueryClientProvider` → `useQuery` 直接抛错。按本文件既有风格**补 mock**
+    （`useTemplates` / `useCreateFromTemplate` / `useCreateTemplate`），而不是套 Provider——
+    这个用例测的是 P1 审核流，不该依赖模板那一路的真网络。
+  - `src/components/TemplateWizard.test.tsx`（8 例，此前**转译失败 = 0 例收集**）：
+    三个真原因叠在一起 —— ① `await` 写在非 async 回调里（2 处，直接 PARSE_ERROR）；
+    ② 缺 `// @vitest-environment jsdom`（`document is not defined`）；
+    ③ **用了 `toBeInTheDocument()` / `toBeDisabled()`，而 `@testing-library/jest-dom` 根本没装**
+    → 即使转译过也是 `xxx is not a function`。
+    **重写**：断言改成 `expect(el).toBeTruthy()` / `(el as HTMLButtonElement).disabled`，
+    按**当前** `TemplateWizard.tsx`（17:43 被另一会话重写过）的 UI 重新出题，12 例
+    （原来 8 例），并按用例隔离 mock（`makeProps()`）+ `afterEach(cleanup())`
+    （不清理会让 `getByText` 撞到多个匹配）。
+  - **`TemplateWizard.tsx` 顺手修一个真 bug**：`customError` 在表单**顶部和保存按钮上方各渲染一次**
+    → 同一条错误在长表单里出现两遍。只保留按钮上方那份。
+  - `src/pages/Knowledge.tsx`：`const { templates, isLoading: templatesLoading }` 的
+    `templatesLoading` 从未使用 → `tsc --noEmit` 报 TS6133（CI 会红）。改成只取 `templates`。
+  - `src/pages/Knowledge.tsx` 还有 3 处 `any`（`catch (e: any)` ×2、`payload: any`）
+    让 `eslint src` 报错（CI 跑的就是这条）→ 改成 `unknown` + `instanceof Error` 收窄、
+    `payload: TemplatePayload`。
+  **DoD 数字**：`vitest` **262/262（19 文件，全绿）**；`tsc --noEmit` **0 错误**；
+  `eslint src tests/e2e` **0 错误**（CI 同一条命令）。
+  **文件清单**：`src/pages/Knowledge.test.tsx`、`src/components/TemplateWizard.test.tsx`、
+  `src/components/TemplateWizard.tsx`、`src/pages/Knowledge.tsx`、`docs/PROGRESS.md`。
